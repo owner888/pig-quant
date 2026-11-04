@@ -1,0 +1,26 @@
+{
+    "name": "owner888/pig-quant",
+    "description": "Dry-run crypto trading in pure PHP: a strategy engine (candles, paper wallet, risk limits, Binance spot data) with no dependencies, and its pig extension — /quant, quant_* tools and a web panel.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["pig", "pig-package", "trading", "quant", "crypto", "binance", "dry-run", "paper-trading", "coding-agent"],
+    "authors": [
+        {"name": "the developer"}
+    ],
+    "require": {
+        "php": ">=8.3",
+        "ext-json": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "Quant\\": "src/Quant/",
+            "PigQuant\\": "src/PigQuant/"
+        }
+    },
+    "extra": {
+        "pig": {
+            "extensions": ["./extensions/pig-quant.php"],
+            "skills": ["./skills"]
+        }
+    }
+}
