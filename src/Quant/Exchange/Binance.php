@@ -52,13 +52,14 @@ final class Binance implements Exchange
             'interval' => $interval,
             'limit' => $limit,
             'startTime' => $startTime,
-            'endTime' => $endTime,
+            // Binance's endTime is inclusive of a candle opening at it; the interface's is not.
+            'endTime' => $endTime === null ? null : $endTime - 1,
         ], static fn ($v) => $v !== null));
 
         return new HttpRequest('GET', rtrim($this->rest, '/') . '/api/v3/klines?' . $query);
     }
 
-    public function parseCandles(string $body): array
+    public function parseCandles(string $body, string $interval): array
     {
         $rows = json_decode($body, true);
 
@@ -103,6 +104,21 @@ final class Binance implements Exchange
         $streams = array_map(fn (string $s): string => strtolower($this->symbol($s)) . '@kline_' . $interval, $symbols);
 
         return rtrim($this->stream, '/') . '/stream?streams=' . implode('/', $streams);
+    }
+
+    public function pagesNewestFirst(): bool
+    {
+        return false;
+    }
+
+    public function streamSubscriptions(array $symbols, string $interval): array
+    {
+        return [];
+    }
+
+    public function streamHeartbeat(): ?array
+    {
+        return null;
     }
 
     public function parseStreamMessage(string $message): ?StreamUpdate

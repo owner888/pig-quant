@@ -4,6 +4,19 @@ What changed, newest first, in pig's format: `## [x.y.z] - YYYY-MM-DD`, then onl
 have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`). Notes under
 `## Unreleased` belong to no version yet; the version itself lives in the git tag.
 
+## Unreleased
+
+### Added
+
+- Added OKX spot (`"exchange": "okx"`): `Quant\Exchange\Okx` — `BTC-USDT` symbols, `history-candles` paged backward 100 a page, the `candle<bar>` channel on the business WebSocket subscribed to by message and kept alive with `ping`. The `Exchange` interface grew what it needed: `pagesNewestFirst()`, `streamSubscriptions()`, `streamHeartbeat()`, `parseCandles()` taking the interval, and an exclusive `endTime`; `History` walks a range either way and `Runner` sends subscriptions and runs the heartbeat.
+
+- Added the spread watcher: `/quant spread start | stop | status | report [days]` and the `quant_spread` tool open the same symbol's candle stream on two exchanges (`quant.spread`, Binance and OKX by default) and write every minute both closed to `~/.pig/agent/quant/spread/`: the two closes, the gap in bps and the widest gap inside the minute. The report says how wide the gap usually is and how often and how long it clears `thresholdBps`, what a round trip costs. Observation only. In the engine: `Quant\Spread\Observer`, `Sample`, `Stats`.
+- The candle stream — connect, subscribe, heartbeat, receive, reopen with backoff — is one class, `PigQuant\Stream`, used by the dry run's runner and by the spread watcher's two streams.
+
+### Fixed
+
+- A backtest report's file name carries the order size, fee, slippage and stop-loss as well as the strategy parameters, so a run with `feeRate=0` no longer overwrites the one before it.
+
 ## [0.2.0] - 2026-11-05
 
 ### New Features

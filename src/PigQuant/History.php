@@ -95,34 +95,39 @@ final class History
     public function fetch(string $symbol, string $interval, int $from, int $to, ?Closure $progress = null): array
     {
         $candles = [];
-        $cursor = $from;
         $pageSize = $this->exchange->candlesPerRequest();
+        $backward = $this->exchange->pagesNewestFirst();
+        // Forward: the window's start moves up past each page. Backward (OKX): its end moves down.
+        $start = $from;
+        $end = $to;
         $pages = 0;
 
-        while ($cursor < $to) {
-            $request = $this->exchange->candlesRequest($symbol, $interval, $pageSize, $cursor, $to - 1);
-            $page = $this->page($request, $symbol, $progress);
+        while ($start < $end) {
+            $request = $this->exchange->candlesRequest($symbol, $interval, $pageSize, $start, $end);
+            $page = $this->page($request, $symbol, $interval, $progress);
             $pages++;
 
             if ($page === []) {
                 break;
             }
 
-            foreach ($page as $candle) {
-                if ($candle->openTime >= $from && $candle->openTime < $to) {
-                    $candles[] = $candle;
-                }
-            }
+            $kept = array_values(array_filter($page, static fn (Candle $c): bool => $c->openTime >= $from && $c->openTime < $to));
+            $candles = $backward ? [...$kept, ...$candles] : [...$candles, ...$kept];
+            $oldest = $page[0];
+            $newest = $page[count($page) - 1];
 
-            $last = $page[count($page) - 1];
-
-            if (count($page) < $pageSize || $last->openTime + 1 >= $to) {
+            if (count($page) < $pageSize) {
                 break;
             }
 
-            $cursor = $last->openTime + 1;
+            if ($backward) {
+                $end = $oldest->openTime;
+            } else {
+                $start = $newest->openTime + 1;
+            }
+
             if ($progress !== null) {
-                $progress(sprintf('%s %s: %d candles so far (page %d, up to %s)', $symbol, $interval, count($candles), $pages, gmdate('Y-m-d H:i', intdiv($last->openTime, 1000))));
+                $progress(sprintf('%s %s: %d candles so far (page %d, %s %s)', $symbol, $interval, count($candles), $pages, $backward ? 'back to' : 'up to', gmdate('Y-m-d H:i', intdiv(($backward ? $oldest : $newest)->openTime, 1000))));
             }
         }
 
@@ -135,7 +140,7 @@ final class History
      * @param Closure(string): void|null $progress
      * @return list<Candle>
      */
-    private function page(HttpRequest $request, string $symbol, ?Closure $progress): array
+    private function page(HttpRequest $request, string $symbol, string $interval, ?Closure $progress): array
     {
         [$response, $body] = Retrying::fetch(
             $this->http,
@@ -153,7 +158,7 @@ final class History
             throw new ExchangeError("{$this->exchange->name()} answered {$response->status} {$response->reason} for {$symbol} candles: " . substr($body, 0, 300));
         }
 
-        return $this->exchange->parseCandles($body);
+        return $this->exchange->parseCandles($body, $interval);
     }
 
     /**

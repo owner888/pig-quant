@@ -24,25 +24,50 @@ interface Exchange
     public function symbol(string $symbol): string;
 
     /**
-     * @param int|null $startTime Unix milliseconds; the candles from this open time on
-     * @param int|null $endTime Unix milliseconds; the candles up to this time
+     * @param int|null $startTime Unix milliseconds; candles whose open time is at or after it
+     * @param int|null $endTime Unix milliseconds; candles whose open time is before it (exclusive)
      */
     public function candlesRequest(string $symbol, string $interval, int $limit, ?int $startTime = null, ?int $endTime = null): HttpRequest;
 
-    /** The most candles one `candlesRequest()` may ask for. */
+    /** The most candles one `candlesRequest()` with a time range may ask for. */
     public function candlesPerRequest(): int;
 
     /**
-     * The candles in a `candlesRequest()` response body, oldest first.
+     * Which end of a time range a page comes from. False (Binance): the oldest `limit` candles
+     * from `startTime` on, so a range is walked forward. True (OKX): the newest `limit` candles
+     * before `endTime`, so a range is walked backward.
+     */
+    public function pagesNewestFirst(): bool;
+
+    /**
+     * The candles in a `candlesRequest()` response body, oldest first. `$interval` is the one
+     * asked for: an exchange whose rows carry no close time works it out from the open time.
      *
      * @return list<Candle>
      * @throws ExchangeError when the body is not what the exchange sends for candles (an error
      *         object, a geo-block page, a truncated transfer)
      */
-    public function parseCandles(string $body): array;
+    public function parseCandles(string $body, string $interval): array;
 
     /** @param list<string> $symbols */
     public function streamUrl(array $symbols, string $interval): string;
+
+    /**
+     * Messages to send once the stream is open, in order — a subscription, say. Empty for an
+     * exchange whose URL names the streams.
+     *
+     * @param list<string> $symbols
+     * @return list<string>
+     */
+    public function streamSubscriptions(array $symbols, string $interval): array;
+
+    /**
+     * What to send, and how often, to keep the stream alive — `['every' => seconds, 'message' =>
+     * text]` — or null for an exchange that pings on its own (the host answers protocol pings).
+     *
+     * @return array{every: float, message: string}|null
+     */
+    public function streamHeartbeat(): ?array;
 
     /**
      * A candle update in a stream message, or null for a message that is not one (subscription

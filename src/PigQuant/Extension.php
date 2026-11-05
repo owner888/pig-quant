@@ -31,12 +31,24 @@ final class Extension
         $pi->on('session_start', static function ($event, HookContext $ctx) use ($pi, $hub): void {
             Config::writeDefaults($pi->getSettings());
 
-            if (Config::load($pi->getSettings())['autostart'] === true) {
+            $config = Config::load($pi->getSettings());
+
+            if ($config['autostart'] === true) {
                 try {
                     $hub->start();
                 } catch (Throwable $error) {
                     Logger::error('[quant] autostart failed: ' . $error->getMessage());
                     $ctx->ui->notify('quant: ' . $error->getMessage(), 'error');
+                }
+            }
+
+            // For a machine left to watch: `quant.spread.autostart` starts the watcher with the session.
+            if ($config['spread']['autostart'] === true) {
+                try {
+                    $hub->spreadStart();
+                } catch (Throwable $error) {
+                    Logger::error('[quant spread] autostart failed: ' . $error->getMessage());
+                    $ctx->ui->notify('quant spread: ' . $error->getMessage(), 'error');
                 }
             }
         });
@@ -48,13 +60,28 @@ final class Extension
         // -------------------------------------------------------------------------
         $pi->registerCommand(
             name: 'quant',
-            description: 'Dry-run trading: /quant status | start | stop | trades | buy <symbol> [quote] | sell <symbol> | reset | backtest <symbol> <interval> <from> [to] [fast=9 slow=21 …]',
+            description: 'Dry-run trading: /quant status | start | stop | trades | buy <symbol> [quote] | sell <symbol> | reset | backtest <symbol> <interval> <from> [to] [fast=9 slow=21 …] | spread start|stop|status|report [days]',
             handler: static function (string $args, HookContext $ctx) use ($hub, $pi): void {
                 $parts = preg_split('/\s+/', trim($args), 3, PREG_SPLIT_NO_EMPTY) ?: [];
                 $sub = strtolower($parts[0] ?? 'status');
 
                 try {
                     switch ($sub) {
+                        case 'spread':
+                            $what = strtolower($parts[1] ?? 'status');
+                            match ($what) {
+                                'start' => $ctx->ui->notify(self::spreadText($hub->spreadStart(), '▶ ')),
+                                'stop' => (static function () use ($hub, $ctx): void {
+                                    $hub->spreadStop();
+                                    $ctx->ui->notify('⏹ quant spread: stopped');
+                                })(),
+                                'status' => $ctx->ui->notify(self::spreadText($hub->spreadStatus(), '')),
+                                'report' => $ctx->ui->notify("📊 Spread\n  " . implode("\n  ", SpreadRunner::lines($hub->spreadReport((int) ($parts[2] ?? 1))))),
+                                default => $ctx->ui->notify("No '/quant spread {$what}'. There is: start, stop, status, report [days].", 'error'),
+                            };
+
+                            return;
+
                         case 'backtest':
                             $spec = Backtest::parseArgs(substr(trim($args), strlen($parts[0])));
                             $run = Backtest::run($pi->getSettings(), $spec['symbol'], $spec['interval'], $spec['from'], $spec['to'], $spec['overrides'], static fn (string $line) => $ctx->ui->notify('quant: ' . $line));
@@ -111,7 +138,7 @@ final class Extension
                             return;
 
                         default:
-                            $ctx->ui->notify("No '/quant {$sub}'. There is: status, start, stop, trades, buy, sell, reset, backtest.", 'error');
+                            $ctx->ui->notify("No '/quant {$sub}'. There is: status, start, stop, trades, buy, sell, reset, backtest, spread.", 'error');
                     }
                 } catch (Throwable $error) {
                     $ctx->ui->notify('❌ quant: ' . $error->getMessage(), 'error');
@@ -218,6 +245,23 @@ final class Extension
             },
         ));
 
+        $pi->registerTool(new CustomTool(
+            name: 'quant_spread',
+            label: 'Quant spread',
+            description: 'The price gap between two exchanges for one symbol, watched live (observation only, nothing is traded). "status": whether it is running, the live gap in bps and the latest prices. "report": the complete minutes of the last N days summarized — mean and percentile gaps, how often and how long the gap cleared the round-trip cost threshold. 1 bps = 0.01%.',
+            parameters: [
+                'type' => 'object',
+                'properties' => [
+                    'what' => ['type' => 'string', 'enum' => ['status', 'report']],
+                    'days' => ['type' => 'integer', 'description' => 'For report: the last N days, today included (default 1)'],
+                ],
+                'required' => ['what'],
+            ],
+            execute: static fn (string $id, array $params): AgentToolResult => new AgentToolResult([new TextContent(self::json(
+                ($params['what'] ?? 'status') === 'report' ? $hub->spreadReport((int) ($params['days'] ?? 1)) : $hub->spreadStatus(),
+            ))]),
+        ));
+
         // -------------------------------------------------------------------------
         // Web UI panel
         // -------------------------------------------------------------------------
@@ -243,6 +287,30 @@ final class Extension
             icon: '📈',
             commands: ['quant'],
         );
+    }
+
+    /** @param array<string, mixed> $status `SpreadRunner::status()` */
+    private static function spreadText(array $status, string $prefix): string
+    {
+        [$a, $b] = $status['exchanges'];
+        $head = $status['running']
+            ? sprintf('%squant spread: watching %s on %s vs %s (%s)', $prefix, $status['symbol'], $a, $b, $status['interval'])
+            : ($status['problem'] !== null ? "⛔ quant spread: stopped on an error — {$status['problem']}" : '⏸ quant spread: not started (/quant spread start)');
+        $lines = [$head];
+
+        if ($status['liveBps'] !== null) {
+            $lines[] = sprintf('  Now: %s %.2f vs %s %.2f → %+.2f bps (threshold %.0f) · %d minutes written this session', $a, $status['latest']['a'], $b, $status['latest']['b'], $status['liveBps'], $status['thresholdBps'], $status['minutesThisSession']);
+        }
+
+        foreach ($status['streams'] as $stream) {
+            if ($stream['retrying'] !== null) {
+                $lines[] = sprintf('  %s: cannot reach the stream (attempt %d): %s', $stream['exchange'], $stream['retrying']['attempt'], $stream['retrying']['error']);
+            } elseif ($stream['connectedAt'] !== null) {
+                $lines[] = sprintf('  %s: since %s, %d reconnect(s)', $stream['exchange'], date('H:i:s', $stream['connectedAt']), $stream['reconnects']);
+            }
+        }
+
+        return implode("\n", $lines);
     }
 
     /** @param array<string, mixed> $status */

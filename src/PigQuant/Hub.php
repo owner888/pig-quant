@@ -112,9 +112,53 @@ final class Hub
         });
     }
 
-    /** On the way out: stop the stream, save the wallet, give the ownership up. */
+    // ---- the spread watcher ---------------------------------------------------------------
+
+    private static ?SpreadRunner $spread = null;
+
+    /** @return array<string, mixed> the status afterwards */
+    public function spreadStart(): array
+    {
+        return $this->call('POST', '/spread/start', [], function (): array {
+            $this->own();
+            $this->spread()->start();
+
+            return $this->spread()->status();
+        });
+    }
+
+    /** @return array<string, mixed> the status afterwards */
+    public function spreadStop(): array
+    {
+        return $this->call('POST', '/spread/stop', [], function (): array {
+            $this->spread()->stop();
+
+            return $this->spread()->status();
+        });
+    }
+
+    /** @return array<string, mixed> */
+    public function spreadStatus(): array
+    {
+        return $this->call('GET', '/spread/status', [], fn (): array => $this->spread()->status());
+    }
+
+    /** The files are on this machine whoever writes them: read here. @return array<string, mixed> */
+    public function spreadReport(int $days): array
+    {
+        return $this->spread()->report(max(1, $days));
+    }
+
+    private function spread(): SpreadRunner
+    {
+        return self::$spread ??= Config::spreadRunner(Config::load($this->pi->getSettings()));
+    }
+
+    /** On the way out: stop the streams, save the wallet, give the ownership up. */
     public function shutdown(): void
     {
+        self::$spread?->stop();
+
         if (self::$runner !== null) {
             self::$runner->stop();
 
@@ -231,6 +275,9 @@ final class Hub
             'POST /start' => $this->start(),
             'POST /stop' => $this->stop(),
             'POST /reset' => $this->reset(),
+            'POST /spread/start' => $this->spreadStart(),
+            'POST /spread/stop' => $this->spreadStop(),
+            'GET /spread/status' => $this->spreadStatus(),
             default => throw new \RuntimeException("No such operation: {$method} {$path}"),
         };
     }

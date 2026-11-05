@@ -31,7 +31,7 @@ final class BinanceTest extends TestCase
             [1700000060000, '105.0', '106.0', '101.0', '102.0', '3.0', 1700000119999, '310.0', 4, '1.0', '103.0', '0'],
         ]);
 
-        $candles = (new Binance())->parseCandles($body);
+        $candles = (new Binance())->parseCandles($body, '1m');
 
         $this->assertCount(2, $candles);
         $this->assertSame(1700000000000, $candles[0]->openTime);
@@ -45,13 +45,13 @@ final class BinanceTest extends TestCase
     {
         $this->expectException(ExchangeError::class);
         $this->expectExceptionMessage('-1121');
-        (new Binance())->parseCandles('{"code":-1121,"msg":"Invalid symbol."}');
+        (new Binance())->parseCandles('{"code":-1121,"msg":"Invalid symbol."}', '1m');
     }
 
     public function testAGeoBlockPageIsNotMistakenForCandles(): void
     {
         $this->expectException(ExchangeError::class);
-        (new Binance())->parseCandles('<html><body>Service unavailable from a restricted location</body></html>');
+        (new Binance())->parseCandles('<html><body>Service unavailable from a restricted location</body></html>', '1m');
     }
 
     public function testTheStreamUrlCombinesTheSymbols(): void

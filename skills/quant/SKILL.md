@@ -13,6 +13,7 @@ description: Dry-run crypto trading inside pig — a paper wallet fed by live Bi
 - `quant_candles(symbol, limit)` — the last candles the engine holds; no network call. The newest one may still be forming (`closed: false`).
 - `quant_trades(limit)` — the paper trades, oldest first, with the reason each was made (`ma-cross`, `stop-loss`, `manual`, `model`, or what you gave).
 - `quant_backtest(symbol, interval, from, to?, overrides?)` — the strategy over past candles, on a fresh engine; the dry-run wallet is untouched. Use it when the person asks how the strategy or a parameter would have done, and compare runs by their figures (return against buy & hold, max drawdown, profit factor, fees), not by the return alone. A good past month proves nothing about the next one; say so when the person reads a result as a forecast.
+- `quant_spread(what, days?)` — the live gap between two exchanges (`status`), or the last days of it summarized (`report`). Read the report against its `thresholdBps`: minutes over it, how often, how long the stretches are. A gap that rarely clears the round-trip cost, and only for a minute, is not an arbitrage, however large its maximum once was; say so plainly.
 - `quant_order(side, symbol, quote_amount?, quantity?, reason)` — a paper order at the last price, through the same risk limits the strategy has. It throws with the reason when refused (over the per-order limit, over the exposure limit, too many positions, not enough cash); say that reason to the person rather than trying a smaller order on your own.
 
 ## How to behave

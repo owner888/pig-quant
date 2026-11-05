@@ -35,6 +35,7 @@ The stream reconnects after the exchange's 24-hour disconnect or a network blip,
 | `trades [n]` | the last n trades |
 | `buy <symbol> [quote]` / `sell <symbol>` | a paper order at the last price, through the risk rules |
 | `reset` | forget every trade, back to the initial balance (asks first) |
+| `spread start` / `stop` / `status` / `report [days]` | watch the price gap between two exchanges (observation only) and summarize it |
 | `backtest <symbol> <interval> <from> [to] [name=value…]` | run the strategy over past candles — `/quant backtest BTCUSDT 1m 2026-10-01 2026-11-01 fast=5 slow=20` |
 
 ### Tools
@@ -46,6 +47,7 @@ The stream reconnects after the exchange's 24-hour disconnect or a network blip,
 | `quant_trades` | The paper trades, with the reason for each |
 | `quant_order` | A paper order through the risk rules; refused orders throw with the reason |
 | `quant_backtest` | The strategy over past candles, with the report below |
+| `quant_spread` | The spread watcher's status, or its report over the last N days |
 
 The `quant` skill tells the model it is a simulation, to place orders only when asked, and to explain the bot's trades from its rules rather than forecast prices.
 
@@ -63,6 +65,18 @@ With `pig web`, the sidebar's Extensions group has a **Quant dry run** panel: st
 Dates are UTC; `to` defaults to now. The candles come from the exchange's REST endpoint a page at a time and every whole calendar month is kept under `~/.pig/agent/quant/candles/`, so the second run over the same months downloads nothing. `name=value` overrides a setting for this run only — `initialQuote`, `feeRate`, `slippage`, `orderQuote`, `fast`, `slow`, `maxOrderQuote`, `maxExposureQuote`, `maxPositions`, `stopLossPct`, `warmupCandles` — so parameters are compared without editing settings. Before the range, `warmupCandles` candles are seeded so the first candle can already be judged.
 
 The run uses a fresh engine with the same wallet, risk rules and strategy code as the dry run; the dry run's wallet is not touched. The report: final equity and return, the same range held outright (buy & hold) for comparison, max drawdown, trades won and lost, win rate, profit factor, fees and their share of the initial balance, average holding time, a position still open at the end (valued at the last close, not sold), the trades, and an equity curve downsampled to 500 points. It is kept as JSON under `~/.pig/agent/quant/backtests/`, named by what it tested.
+
+## Watching the spread between two exchanges
+
+```
+/quant spread start
+/quant spread status
+/quant spread report 3
+```
+
+Before building anything on the "arbitrage between exchanges" idea, measure it. The watcher opens the candle stream of the same symbol on two exchanges (`quant.spread`: `binance` and `okx`, `BTCUSDT`, `1m` by default), and for every minute both have closed writes one line to `~/.pig/agent/quant/spread/<a>-<b>-<symbol>-<day>.jsonl`: the two closes, the gap at the close in bps (1 bps = 0.01%; positive when the second exchange is dearer) and the widest gap seen inside the minute. Nothing is traded.
+
+`report` summarizes the last N days: mean gap and which side is usually dearer, the |gap| at p50 / p90 / p99 and its maximum, the widest intra-minute gaps, and — against `thresholdBps`, what a round trip on both exchanges costs (30 bps by default: two fees of 0.1% and slippage) — how many minutes cleared it, how often, in how many stretches and how long the longest was. If those minutes are few and short, there is nothing for a bot at this cost structure to take. On a machine left to watch, `quant.spread.autostart: true` starts the watcher with every session.
 
 ## Settings
 
@@ -83,13 +97,15 @@ Under `quant` in `~/.pig/agent/settings.json`:
   "strategy": {"name": "ma-cross", "fast": 9, "slow": 21},
   "risk": {"maxOrderQuote": 100, "maxExposureQuote": 500, "maxPositions": 3, "stopLossPct": 0.02},
   "warmupCandles": 200,
-  "autostart": false
+  "autostart": false,
+  "spread": {"exchanges": ["binance", "okx"], "symbol": "BTCUSDT", "interval": "1m", "thresholdBps": 30, "autostart": false}
 }
 ```
 
 - `symbols` — any number; each has its own series and position. `interval` is one of Binance's (`1m`, `5m`, `1h`, …).
 - `orderQuote` — what one strategy buy spends. `risk.maxOrderQuote` caps any buy, `maxExposureQuote` caps what is in positions at cost, `maxPositions` caps how many symbols are held, `stopLossPct` (0.02 = 2%) closes a position under its average price; 0 turns the stop-loss off.
 - `restUrl` / `streamUrl` — Binance keeps several hosts. Where `api.binance.com` is not reachable, `https://data-api.binance.vision` serves market data without a key; the spot testnet is `https://testnet.binance.vision` and `wss://stream.testnet.binance.vision`.
+- `exchange` — `binance` (default) or `okx`. With `okx`, symbols are `BTC-USDT` (a `BTCUSDT` is split for you), the URL defaults become OKX's (`https://www.okx.com`, `wss://ws.okx.com:8443`), history is paged backward 100 candles at a time (slower than Binance's 1,000: a month of 1m candles is ~450 pages), and the stream is subscribed to by message and kept alive with a `ping` every 20 s.
 - `strategy.name` — `ma-cross` (SMA crossover, `fast` and `slow` periods) is the one that ships.
 
 A change takes effect at the next session.
@@ -113,7 +129,7 @@ $engine->seed('BTCUSDT', $engine->exchange->parseCandles($bodyOfTheKlinesRespons
 $engine->onCandle('BTCUSDT', $engine->exchange->parseStreamMessage($message)->candle);
 ```
 
-Another exchange is one class implementing `Quant\Exchange\Exchange` — five methods, all pure, tested from recorded payloads — and a line in `PigQuant\Config::exchange()`.
+Another exchange is one class implementing `Quant\Exchange\Exchange` — pure functions over strings, tested from recorded payloads: how to spell a symbol, the candles request and how to read its answer, which way a time range is paged, the stream's URL, its subscription messages and its heartbeat, and how to read a stream message — and a line in `PigQuant\Config::exchange()`. `Binance` and `Okx` are the two that ship.
 
 ## Tests
 

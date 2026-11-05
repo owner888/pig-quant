@@ -134,7 +134,7 @@ final class BacktestTest extends TestCase
         $request = (new Binance())->candlesRequest('BTCUSDT', '1m', 1000, 1_700_000_000_000, 1_700_003_600_000);
 
         $this->assertStringContainsString('startTime=1700000000000', $request->url);
-        $this->assertStringContainsString('endTime=1700003600000', $request->url);
+        $this->assertStringContainsString('endTime=1700003599999', $request->url, "the interface's end is exclusive; Binance's is inclusive");
         $this->assertStringNotContainsString('startTime', (new Binance())->candlesRequest('BTCUSDT', '1m', 10)->url);
     }
 }

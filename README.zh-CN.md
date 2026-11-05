@@ -35,6 +35,7 @@ pig install git:github.com/owner888/pig-quant
 | `trades [n]` | 最近 n 笔成交 |
 | `buy <symbol> [quote]` / `sell <symbol>` | 按最新价下一笔模拟单，同样过风控 |
 | `reset` | 清空所有成交，回到初始资金（先确认） |
+| `spread start` / `stop` / `status` / `report [days]` | 观察两个交易所之间的价差（只观察不交易）并汇总 |
 | `backtest <symbol> <interval> <from> [to] [name=value…]` | 用历史 K 线跑策略——`/quant backtest BTCUSDT 1m 2026-10-01 2026-11-01 fast=5 slow=20` |
 
 ### 工具
@@ -46,6 +47,7 @@ pig install git:github.com/owner888/pig-quant
 | `quant_trades` | 模拟成交记录，带每笔的原因 |
 | `quant_order` | 过风控的模拟下单；被拒时抛出原因 |
 | `quant_backtest` | 用历史 K 线跑策略，返回下面说的报告 |
+| `quant_spread` | 价差观察器的状态，或最近 N 天的汇总报告 |
 
 `quant` skill 告诉模型：这是模拟盘；只在用户要求时下单；解释机器人的成交要从策略规则出发，不要预测价格。
 
@@ -63,6 +65,18 @@ pig install git:github.com/owner888/pig-quant
 日期按 UTC；`to` 省略即到现在。K 线通过交易所 REST 分页拉取，整月的数据缓存在 `~/.pig/agent/quant/candles/`，同区间第二次跑不再下载。`name=value` 只覆盖本次运行的设置——`initialQuote`、`feeRate`、`slippage`、`orderQuote`、`fast`、`slow`、`maxOrderQuote`、`maxExposureQuote`、`maxPositions`、`stopLossPct`、`warmupCandles`——换参数对比不用改设置文件。区间之前会先灌入 `warmupCandles` 根 K 线预热，第一根就能判断。
 
 回测用一个全新的引擎，钱包、风控、策略和模拟盘是同一套代码；模拟盘的钱包不受影响。报告包含：最终权益和收益率、同区间「买入持有」的收益作对照、最大回撤、盈亏笔数、胜率、盈亏比、手续费及其占初始资金的比例、平均持仓时长、结束时仍未平的仓位（按最后收盘价估值，不强制卖出）、成交列表，以及降采样到 500 点的权益曲线。结果以 JSON 存在 `~/.pig/agent/quant/backtests/`，文件名就是测试的内容。
+
+## 观察两个交易所之间的价差
+
+```
+/quant spread start
+/quant spread status
+/quant spread report 3
+```
+
+在「跨交易所套利」这个想法上投入任何东西之前，先量一量。观察器同时打开两个交易所同一交易对的 K 线流（`quant.spread`，默认 `binance` 和 `okx`、`BTCUSDT`、`1m`），每当两边都收盘了同一分钟，就往 `~/.pig/agent/quant/spread/<a>-<b>-<symbol>-<day>.jsonl` 写一行：两边收盘价、收盘时的价差（bps，1 bps = 0.01%，第二家更贵为正）、以及这一分钟内出现过的最大价差。不交易。
+
+`report` 汇总最近 N 天：平均价差和通常哪边更贵、|价差| 的 p50 / p90 / p99 和最大值、分钟内最大价差，以及——对照 `thresholdBps`，即在两家各做一次所需的来回成本（默认 30 bps：两次 0.1% 手续费加滑点）——有多少分钟超过了它、占比多少、分成几段、最长一段多少分钟。如果超过阈值的分钟又少又短，在这个成本结构下机器人就没有肉可吃。放在服务器上挂着的话，`quant.spread.autostart: true` 会让每次会话启动时自动开始观察。
 
 ## 配置
 
@@ -83,13 +97,15 @@ pig install git:github.com/owner888/pig-quant
   "strategy": {"name": "ma-cross", "fast": 9, "slow": 21},
   "risk": {"maxOrderQuote": 100, "maxExposureQuote": 500, "maxPositions": 3, "stopLossPct": 0.02},
   "warmupCandles": 200,
-  "autostart": false
+  "autostart": false,
+  "spread": {"exchanges": ["binance", "okx"], "symbol": "BTCUSDT", "interval": "1m", "thresholdBps": 30, "autostart": false}
 }
 ```
 
 - `symbols`——任意多个，各自独立的 K 线序列和持仓。`interval` 用 Binance 的写法（`1m`、`5m`、`1h`……）。
 - `orderQuote`——策略每次买入花多少。`risk.maxOrderQuote` 限制单笔买入上限，`maxExposureQuote` 限制持仓成本总额，`maxPositions` 限制同时持有的交易对数，`stopLossPct`（0.02 = 2%）在均价下方平仓，0 表示关闭止损。
 - `restUrl` / `streamUrl`——Binance 有多个域名。`api.binance.com` 不通的地方可用 `https://data-api.binance.vision`（行情数据不需要 key）；现货测试网是 `https://testnet.binance.vision` 和 `wss://stream.testnet.binance.vision`。
+- `exchange`——`binance`（默认）或 `okx`。选 `okx` 时交易对写 `BTC-USDT`（写 `BTCUSDT` 会自动拆），URL 默认换成 OKX 的（`https://www.okx.com`、`wss://ws.okx.com:8443`），历史 K 线从新到旧倒着翻页、每页 100 根（比 Binance 的 1000 慢，1m 一个月约 450 页），行情流连上后发订阅消息、每 20 秒发一次 `ping` 保活。
 - `strategy.name`——内置 `ma-cross`（SMA 金叉死叉，`fast`、`slow` 周期）。
 
 改动在下一次会话生效。
@@ -113,7 +129,7 @@ $engine->seed('BTCUSDT', $engine->exchange->parseCandles($klinesResponseBody));
 $engine->onCandle('BTCUSDT', $engine->exchange->parseStreamMessage($message)->candle);
 ```
 
-新增交易所 = 一个实现 `Quant\Exchange\Exchange` 的类（五个方法，全是纯函数，用录下来的报文做测试）+ `PigQuant\Config::exchange()` 里加一行。
+新增交易所 = 一个实现 `Quant\Exchange\Exchange` 的类（全是对字符串的纯函数，用录下来的报文做测试：交易对怎么写、K 线请求怎么构造和怎么读、时间区间往哪个方向翻页、流的 URL、订阅消息、心跳、流消息怎么读）+ `PigQuant\Config::exchange()` 里加一行。内置 `Binance` 和 `Okx` 两个。
 
 ## 测试
 

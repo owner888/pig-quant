@@ -151,6 +151,12 @@ final class Backtest
         return $date->getTimestamp() * 1000;
     }
 
+    /** `0.001` → `0.001`, `100.0` → `100`: a number as it reads, for a file name. */
+    private static function short(float $value): string
+    {
+        return rtrim(rtrim(sprintf('%.6f', $value), '0'), '.');
+    }
+
     private static function save(Report $report): string
     {
         $directory = self::directory();
@@ -159,8 +165,10 @@ final class Backtest
             throw new \RuntimeException("Could not create {$directory}.");
         }
 
+        // Everything that changes the result is in the name, so two runs never overwrite each other.
         $params = implode('-', array_map(static fn ($k, $v): string => "{$k}{$v}", array_keys($report->parameters), $report->parameters));
-        $file = sprintf('%s/%s-%s-%s-%s-%s-%s.json', $directory, $report->symbol, $report->interval, gmdate('Ymd', intdiv($report->from, 1000)), gmdate('Ymd', intdiv($report->to, 1000)), $report->strategy, $params);
+        $costs = sprintf('order%s-fee%s-slip%s-stop%s', self::short($report->orderQuote), self::short($report->feeRate), self::short($report->slippage), self::short((float) $report->risk['stopLossPct']));
+        $file = sprintf('%s/%s-%s-%s-%s-%s-%s-%s.json', $directory, $report->symbol, $report->interval, gmdate('Ymd', intdiv($report->from, 1000)), gmdate('Ymd', intdiv($report->to, 1000)), $report->strategy, $params, $costs);
 
         if (file_put_contents($file, json_encode($report->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION) . "\n") === false) {
             throw new \RuntimeException("Could not write {$file}.");
