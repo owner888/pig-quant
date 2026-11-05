@@ -8,6 +8,8 @@ namespace Quant\Backtest;
 final readonly class Report
 {
     /**
+     * @param list<string> $symbols the basket; `symbol` is them joined with `+`
+     * @param array<string, array<string, mixed>> $bySymbol each symbol's trades, closedTrades, wins, pnl, fees, buyAndHoldPct, openPosition
      * @param array<string, mixed> $parameters
      * @param array<string, float|int|string> $risk
      * @param float|string $orderQuote an amount, or `25%` / `all` of the free cash
@@ -17,6 +19,7 @@ final readonly class Report
      */
     public function __construct(
         public string $symbol,
+        public array $symbols,
         public string $interval,
         public string $strategy,
         public array $parameters,
@@ -46,6 +49,7 @@ final readonly class Report
         public float $feesPct,
         public int $averageHoldMs,
         public ?array $openPosition,
+        public array $bySymbol,
         public array $curve,
         public array $tradeList,
     ) {
@@ -67,12 +71,22 @@ final readonly class Report
         $hold = $this->averageHoldMs;
         $holdText = $hold >= 86_400_000 ? sprintf('%.1f d', $hold / 86_400_000) : ($hold >= 3_600_000 ? sprintf('%.1f h', $hold / 3_600_000) : sprintf('%.0f min', $hold / 60_000));
 
-        return [
+        $lines = [
             sprintf('%s %s · %s %s · %s → %s · %d candles', $this->symbol, $this->interval, $this->strategy, json_encode($this->parameters), gmdate('Y-m-d', intdiv($this->from, 1000)), gmdate('Y-m-d', intdiv($this->to, 1000)), $this->candles),
             sprintf('Equity %.2f → %.2f (%s) · buy & hold %s (max drawdown %.2f%%)', $this->initialQuote, $this->finalEquity, $pct($this->returnPct), $pct($this->buyAndHoldPct), $this->buyAndHoldDrawdownPct * 100),
             sprintf('Max drawdown %.2f (%.2f%%)', $this->maxDrawdown, $this->maxDrawdownPct * 100),
             sprintf('Trades %d (%d closed): %d won, %d lost, win rate %.1f%%, profit factor %s', $this->trades, $this->closedTrades, $this->wins, $this->losses, $this->winRate * 100, is_finite($this->profitFactor) ? sprintf('%.2f', $this->profitFactor) : '∞'),
             sprintf('Fees %.2f (%.2f%% of initial) · average hold %s', $this->fees, $this->feesPct * 100, $holdText),
-        ] + ($this->openPosition !== null ? [5 => sprintf('Open at the end: %s %s @ %.2f (valued at the last close)', $this->openPosition['symbol'], rtrim(rtrim(sprintf('%.8f', $this->openPosition['quantity']), '0'), '.'), $this->openPosition['averagePrice'])] : []);
+        ];
+
+        if (count($this->symbols) > 1) {
+            foreach ($this->bySymbol as $symbol => $s) {
+                $lines[] = sprintf('  %s: %d closed, %d won, P&L %s%.2f · held outright %s%s', $symbol, $s['closedTrades'], $s['wins'], $s['pnl'] >= 0 ? '+' : '', $s['pnl'], $pct($s['buyAndHoldPct']), $s['openPosition'] !== null ? ' · still open' : '');
+            }
+        } elseif ($this->openPosition !== null) {
+            $lines[] = sprintf('Open at the end: %s %s @ %.2f (valued at the last close)', $this->openPosition['symbol'], rtrim(rtrim(sprintf('%.8f', $this->openPosition['quantity']), '0'), '.'), $this->openPosition['averagePrice']);
+        }
+
+        return $lines;
     }
 }

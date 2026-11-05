@@ -63,11 +63,12 @@ pig install git:github.com/owner888/pig-quant
 /quant backtest BTCUSDT 1m 2026-10-01 2026-11-01
 /quant backtest ETHUSDT 15m 2026-06-01 fast=5 slow=20 stopLossPct=0.03
 /quant backtest BTC-USDT 1d 2024-11-01 2026-11-01 orderQuote=all maxOrderQuote=all maxExposureQuote=all maxPositions=1
+/quant backtest BTC-USDT,ETH-USDT,SOL-USDT 1d 2024-11-01 2026-11-01 orderQuote=all maxOrderQuote=all maxExposureQuote=all maxPositions=3
 ```
 
 日期按 UTC；`to` 省略即到现在。K 线通过交易所 REST 分页拉取，整月的数据缓存在 `~/.pig/agent/quant/candles/`，同区间第二次跑不再下载。`name=value` 只覆盖本次运行的设置——`initialQuote`、`feeRate`、`slippage`、`orderQuote`、`fast`、`slow`、`maxOrderQuote`、`maxExposureQuote`、`maxPositions`、`stopLossPct`、`warmupCandles`——换参数对比不用改设置文件；`orderQuote`、`maxOrderQuote`、`maxExposureQuote` 也可以写 `all` 或 `50%`。区间之前会先灌入 `warmupCandles` 根 K 线预热，第一根就能判断。
 
-和买入持有比较时要用整个钱包（`orderQuote=all`）而不是固定金额，否则持币光靠复利就赢了。回测用一个全新的引擎，钱包、风控、策略和模拟盘是同一套代码；模拟盘的钱包不受影响。报告包含：最终权益和收益率、同区间「买入持有」的收益及其自身最大回撤作对照、策略的最大回撤、盈亏笔数、胜率、盈亏比、手续费及其占初始资金的比例、平均持仓时长、结束时仍未平的仓位（按最后收盘价估值，不强制卖出）、成交列表，以及降采样到 500 点的权益曲线。结果以 JSON 存在 `~/.pig/agent/quant/backtests/`，文件名就是测试的内容。
+和买入持有比较时要用整个钱包（`orderQuote=all`）而不是固定金额，否则持币光靠复利就赢了。多个交易对用逗号隔开就是一篮子：各自的 K 线合并成一条时间轴喂给同一个引擎——钱包、`maxPositions`、敞口上限都共享——「买入持有」变成等权篮子；报告每个币多一行（平仓笔数、赢的笔数、盈亏、该币单独持有的收益）。扫描同样接受篮子。回测用一个全新的引擎，钱包、风控、策略和模拟盘是同一套代码；模拟盘的钱包不受影响。报告包含：最终权益和收益率、同区间「买入持有」的收益及其自身最大回撤作对照、策略的最大回撤、盈亏笔数、胜率、盈亏比、手续费及其占初始资金的比例、平均持仓时长、结束时仍未平的仓位（按最后收盘价估值，不强制卖出）、成交列表，以及降采样到 500 点的权益曲线。结果以 JSON 存在 `~/.pig/agent/quant/backtests/`，文件名就是测试的内容。
 
 ### 参数扫描
 
@@ -115,7 +116,7 @@ pig install git:github.com/owner888/pig-quant
 ```
 
 - `symbols`——任意多个，各自独立的 K 线序列和持仓。`interval` 用 Binance 的写法（`1m`、`5m`、`1h`……）。
-- `orderQuote`——策略每次买入花多少：一个金额（`100`），或可用现金的比例（`"50%"`、`"all"`），后者让利润复投。`risk.maxOrderQuote` 限制单笔买入上限，`maxExposureQuote` 限制持仓成本总额——各自是金额或权益的比例（`"all"` 即不限）；`maxPositions` 限制同时持有的交易对数，`stopLossPct`（0.02 = 2%）在均价下方平仓，0 表示关闭止损。
+- `orderQuote`——策略每次买入花多少：一个金额（`100`），或可用现金的比例（`"50%"`、`"all"`），后者让利润复投；比例会按还空着的仓位数平摊，`"all"` 配 `maxPositions: 3` 就是三个币各占三分之一。`risk.maxOrderQuote` 限制单笔买入上限，`maxExposureQuote` 限制持仓成本总额——各自是金额或权益的比例（`"all"` 即不限）；`maxPositions` 限制同时持有的交易对数，`stopLossPct`（0.02 = 2%）在均价下方平仓，0 表示关闭止损。
 - `restUrl` / `streamUrl`——Binance 有多个域名。`api.binance.com` 不通的地方可用 `https://data-api.binance.vision`（行情数据不需要 key）；现货测试网是 `https://testnet.binance.vision` 和 `wss://stream.testnet.binance.vision`。
 - `exchange`——`binance`（默认）或 `okx`。选 `okx` 时交易对写 `BTC-USDT`（写 `BTCUSDT` 会自动拆），URL 默认换成 OKX 的（`https://www.okx.com`、`wss://ws.okx.com:8443`），历史 K 线从新到旧倒着翻页、每页 100 根（比 Binance 的 1000 慢，1m 一个月约 450 页），行情流连上后发订阅消息、每 20 秒发一次 `ping` 保活。
 - `strategy.name`——内置 `ma-cross`（SMA 金叉死叉，`fast`、`slow` 周期）。

@@ -4,6 +4,16 @@ What changed, newest first, in pig's format: `## [x.y.z] - YYYY-MM-DD`, then onl
 have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`). Notes under
 `## Unreleased` belong to no version yet; the version itself lives in the git tag.
 
+## [0.5.0] - 2026-11-05
+
+### Added
+
+- Baskets: `/quant backtest BTC-USDT,ETH-USDT,SOL-USDT 1d …`, `/quant sweep` and the tools take several symbols, comma-separated. Their candles are merged into one timeline and go through one engine — one wallet, `maxPositions` and the exposure limit shared, as in the dry run — and the report is the basket's (buy & hold is the equal-weight basket, a share of the balance in each symbol) with a line per symbol: closed trades, wins, P&L, that symbol held outright, whether it is still open. In the engine: `Backtester::runBasket()`, `Report::symbols` and `bySymbol`.
+
+### Changed
+
+- A share order size (`"orderQuote": "all"` or `"50%"`) is spread over the position slots still open: with `maxPositions: 3` and one position held, `"all"` spends half the free cash, so a basket ends up equal-weight and fully invested instead of the first symbol taking everything. A fixed order size is unchanged. `Engine::orderSize()` says what the next buy spends.
+
 ## [0.4.0] - 2026-11-05
 
 ### Added

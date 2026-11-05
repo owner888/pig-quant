@@ -48,12 +48,12 @@ final class Sweep
 
         $combinations = Grid::combinations($sweeps, $fixed);
         $base = Backtest::configure(Config::load($settings), $fixed);
-        $base['symbols'] = [$symbol];
+        $base['symbols'] = Backtest::symbols($symbol);
         $base['interval'] = $interval;
-        ['symbol' => $symbol, 'warmup' => $warmup, 'candles' => $candles] = Backtest::candles($base, $symbol, $interval, $from, $to, $progress);
+        ['symbols' => $symbols, 'warmup' => $warmup, 'candles' => $candles] = Backtest::candles($base, $symbol, $interval, $from, $to, $progress);
 
         if ($progress !== null) {
-            $progress(sprintf('%s %s: %d candles (+%d warm-up); %d runs over %s', $symbol, $interval, count($candles), count($warmup), count($combinations), implode(', ', array_map(static fn (string $n): string => "{$n}=" . implode(',', $sweeps[$n]), array_keys($sweeps)))));
+            $progress(sprintf('%s %s: %d candles (+%d warm-up); %d runs over %s', implode('+', $symbols), $interval, array_sum(array_map('count', $candles)), array_sum(array_map('count', $warmup)), count($combinations), implode(', ', array_map(static fn (string $n): string => "{$n}=" . implode(',', $sweeps[$n]), array_keys($sweeps)))));
         }
 
         $results = [];
@@ -75,7 +75,7 @@ final class Sweep
                 continue;
             }
 
-            $report = Backtester::run($engine, $symbol, $warmup, $candles);
+            $report = Backtester::runBasket($engine, $warmup, $candles);
             $results[] = ['overrides' => $combination, 'report' => $report];
 
             if ($progress !== null) {

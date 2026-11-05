@@ -61,7 +61,7 @@ final class Extension
         // -------------------------------------------------------------------------
         $pi->registerCommand(
             name: 'quant',
-            description: 'Dry-run trading: /quant status | start | stop | trades | buy <symbol> [quote] | sell <symbol> | reset | backtest <symbol> <interval> <from> [to] [fast=9 slow=21 …] | sweep <symbol> <interval> <from> [to] fast=10..30:5 slow=30..100:10 | spread start|stop|status|report [days]',
+            description: 'Dry-run trading: /quant status | start | stop | trades | buy <symbol> [quote] | sell <symbol> | reset | backtest <symbol[,symbol…]> <interval> <from> [to] [fast=9 slow=21 …] | sweep <symbol[,…]> <interval> <from> [to] fast=10..30:5 slow=30..100:10 | spread start|stop|status|report [days]',
             handler: static function (string $args, HookContext $ctx) use ($hub, $pi): void {
                 $parts = preg_split('/\s+/', trim($args), 3, PREG_SPLIT_NO_EMPTY) ?: [];
                 $sub = strtolower($parts[0] ?? 'status');
@@ -226,7 +226,7 @@ final class Extension
             parameters: [
                 'type' => 'object',
                 'properties' => [
-                    'symbol' => ['type' => 'string', 'description' => 'e.g. BTCUSDT'],
+                    'symbol' => ['type' => 'string', 'description' => 'e.g. BTCUSDT; a basket is comma-separated, BTC-USDT,ETH-USDT,SOL-USDT — one wallet, equal-weight buy & hold for comparison'],
                     'interval' => ['type' => 'string', 'description' => 'Candle interval: 1m, 5m, 15m, 1h, 4h, 1d'],
                     'from' => ['type' => 'string', 'description' => 'Start, UTC: 2026-10-01 or 2026-10-01T09:30'],
                     'to' => ['type' => 'string', 'description' => 'End, UTC; now when omitted'],
@@ -260,7 +260,7 @@ final class Extension
             parameters: [
                 'type' => 'object',
                 'properties' => [
-                    'symbol' => ['type' => 'string', 'description' => 'e.g. BTCUSDT'],
+                    'symbol' => ['type' => 'string', 'description' => 'e.g. BTCUSDT; a basket is comma-separated, BTC-USDT,ETH-USDT,SOL-USDT — one wallet, equal-weight buy & hold for comparison'],
                     'interval' => ['type' => 'string', 'description' => 'Candle interval: 1m, 5m, 15m, 1h, 4h, 1d'],
                     'from' => ['type' => 'string', 'description' => 'Start, UTC: 2026-10-01 or 2026-10-01T09:30'],
                     'to' => ['type' => 'string', 'description' => 'End, UTC; now when omitted'],

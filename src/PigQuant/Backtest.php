@@ -14,8 +14,8 @@ use Quant\Market\Interval;
 use Quant\Risk\Limit;
 
 /**
- * A backtest as `/quant backtest` and `quant_backtest` ask for it: a symbol, an interval, a
- * range, and the settings' `quant` block with any of its numbers overridden for this run
+ * A backtest as `/quant backtest` and `quant_backtest` ask for it: a symbol (or a basket of
+ * them, comma-separated), an interval, a range, and the settings' `quant` block with any of its numbers overridden for this run
  * (`fast=5 slow=20 stopLossPct=0.03`), so parameters are compared without editing settings.
  *
  * The engine is a fresh one — the dry run's wallet is not touched — and the report is kept as
@@ -39,16 +39,16 @@ final class Backtest
     public static function run(?Settings $settings, string $symbol, string $interval, int $from, int $to, array $overrides = [], ?Closure $progress = null): array
     {
         $config = self::configure(Config::load($settings), $overrides);
-        $config['symbols'] = [$symbol];
+        $config['symbols'] = self::symbols($symbol);
         $config['interval'] = $interval;
         $engine = Config::engine($config);
-        ['symbol' => $symbol, 'warmup' => $warmup, 'candles' => $candles] = self::candles($config, $symbol, $interval, $from, $to, $progress);
+        ['symbols' => $symbols, 'warmup' => $warmup, 'candles' => $candles] = self::candles($config, $symbol, $interval, $from, $to, $progress);
 
         if ($progress !== null) {
-            $progress(sprintf('%s %s: %d candles (+%d warm-up); running %s %s', $symbol, $interval, count($candles), count($warmup), $engine->strategy->name(), json_encode($engine->strategy->parameters())));
+            $progress(sprintf('%s %s: %d candles (+%d warm-up); running %s %s', implode('+', $symbols), $interval, array_sum(array_map('count', $candles)), array_sum(array_map('count', $warmup)), $engine->strategy->name(), json_encode($engine->strategy->parameters())));
         }
 
-        $report = Backtester::run($engine, $symbol, $warmup, $candles, static function (int $done, int $total) use ($progress): void {
+        $report = Backtester::runBasket($engine, $warmup, $candles, static function (int $done, int $total) use ($progress): void {
             if ($done === $total || $done % 10_000 === 0) {
                 if ($progress !== null) {
                     $progress("{$done} / {$total} candles");
@@ -60,12 +60,29 @@ final class Backtest
     }
 
     /**
-     * The warm-up and the range for a run, from the exchange the settings name, through the
-     * monthly cache. Shared by a backtest and by every run of a sweep.
+     * `BTC-USDT,ETH-USDT` → the symbols of a basket (one symbol is a basket of one).
+     *
+     * @return list<string>
+     */
+    public static function symbols(string $text): array
+    {
+        $symbols = array_values(array_filter(array_map('trim', explode(',', $text)), static fn (string $s): bool => $s !== ''));
+
+        if ($symbols === []) {
+            throw new \InvalidArgumentException('A backtest needs a symbol.');
+        }
+
+        return $symbols;
+    }
+
+    /**
+     * The warm-up and the range for a run, every symbol of the basket, from the exchange the
+     * settings name, through the monthly cache. Shared by a backtest and by every run of a sweep.
      *
      * @param array<string, mixed> $config
+     * @param string $symbol one symbol, or several comma-separated
      * @param Closure(string): void|null $progress
-     * @return array{symbol: string, warmup: list<Candle>, candles: list<Candle>}
+     * @return array{symbols: list<string>, warmup: array<string, list<Candle>>, candles: array<string, list<Candle>>}
      */
     public static function candles(array $config, string $symbol, string $interval, int $from, int $to, ?Closure $progress = null): array
     {
@@ -74,17 +91,24 @@ final class Backtest
         }
 
         $exchange = Config::exchange($config);
-        $symbol = $exchange->symbol($symbol);
         $history = new History($exchange);
         $warmupFrom = $from - (int) $config['warmupCandles'] * Interval::milliseconds($interval);
-        $warmup = $history->range($symbol, $interval, $warmupFrom, $from, $progress);
-        $candles = $history->range($symbol, $interval, $from, $to, $progress);
+        $symbols = [];
+        $warmup = [];
+        $candles = [];
 
-        if ($candles === []) {
-            throw new \RuntimeException("{$exchange->name()} has no {$symbol} {$interval} candles between " . gmdate('Y-m-d', intdiv($from, 1000)) . ' and ' . gmdate('Y-m-d', intdiv($to, 1000)) . '.');
+        foreach (self::symbols($symbol) as $one) {
+            $one = $exchange->symbol($one);
+            $symbols[] = $one;
+            $warmup[$one] = $history->range($one, $interval, $warmupFrom, $from, $progress);
+            $candles[$one] = $history->range($one, $interval, $from, $to, $progress);
+
+            if ($candles[$one] === []) {
+                throw new \RuntimeException("{$exchange->name()} has no {$one} {$interval} candles between " . gmdate('Y-m-d', intdiv($from, 1000)) . ' and ' . gmdate('Y-m-d', intdiv($to, 1000)) . '.');
+            }
         }
 
-        return ['symbol' => $symbol, 'warmup' => $warmup, 'candles' => $candles];
+        return ['symbols' => $symbols, 'warmup' => $warmup, 'candles' => $candles];
     }
 
     /**
@@ -133,7 +157,7 @@ final class Backtest
     }
 
     /**
-     * `<symbol> <interval> <from> [to] [name=value…]` into its parts. Dates are `YYYY-MM-DD`
+     * `<symbol[,symbol…]> <interval> <from> [to] [name=value…]` into its parts. Dates are `YYYY-MM-DD`
      * (UTC) or `YYYY-MM-DDTHH:MM`; `to` defaults to now.
      *
      * @return array{symbol: string, interval: string, from: int, to: int, overrides: array<string, string>}

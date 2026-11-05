@@ -40,7 +40,7 @@ final class Engine
 
     private int $candlesSeen = 0;
 
-    /** What one strategy buy spends: an amount, or a share of the free cash (`"all"` compounds). */
+    /** What one strategy buy spends: an amount, or a share of the free cash over the open position slots (`"all"` compounds); see `orderSize()`. */
     public readonly Limit $orderQuote;
 
     /**
@@ -120,7 +120,7 @@ final class Engine
                 return;
             }
 
-            $quoteAmount = $this->orderQuote->quote($this->wallet->quote());
+            $quoteAmount = $this->orderSize();
             $refused = $this->risk->refuseBuy($symbol, $quoteAmount, $this->wallet, $this->equity());
 
             if ($refused !== null) {
@@ -155,7 +155,7 @@ final class Engine
         $time = (int) floor(microtime(true) * 1000);
 
         if ($side === Side::Buy) {
-            $quoteAmount ??= $this->orderQuote->quote($this->wallet->quote());
+            $quoteAmount ??= $this->orderSize();
             $refused = $this->risk->refuseBuy($symbol, $quoteAmount, $this->wallet, $this->equity());
 
             if ($refused !== null) {
@@ -172,6 +172,25 @@ final class Engine
         $this->emit('trade', ['trade' => $trade]);
 
         return $trade;
+    }
+
+    /**
+     * What the next strategy buy spends. A fixed order size is that amount. A share is a share
+     * of the free cash spread over the position slots still open — `"all"` with `maxPositions: 3`
+     * and one position held spends half the cash, so a basket ends up equal-weight and fully
+     * invested rather than the first symbol taking everything.
+     */
+    public function orderSize(): float
+    {
+        $cash = $this->wallet->quote();
+
+        if ($this->orderQuote->share === null) {
+            return $this->orderQuote->quote($cash);
+        }
+
+        $slots = max(1, $this->risk->maxPositions - count($this->wallet->positions()));
+
+        return $this->orderQuote->quote($cash) / $slots;
     }
 
     /** Cash plus every position at the last price seen for it. */
