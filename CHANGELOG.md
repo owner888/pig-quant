@@ -4,6 +4,12 @@ What changed, newest first, in pig's format: `## [x.y.z] - YYYY-MM-DD`, then onl
 have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`). Notes under
 `## Unreleased` belong to no version yet; the version itself lives in the git tag.
 
+## [0.6.0] - 2026-11-05
+
+### Added
+
+- Added `/quant funding <symbol> <from> [to]` and the `quant_funding` tool: what a cash-and-carry (long spot, short the perpetual) would have collected in funding over a range, from Binance USDⓈ-M funding history (`quant.funding.restUrl`; whole months cached under `~/.pig/agent/quant/funding/`): gross and annualized, net of one round trip (four legs, `feeRate` / `funding.perpFeeRate` / `slippage`), on the capital both legs tie up (`funding.marginRatio`), negative settlements and the longest stretch of them, every month's total. Observation only. In the engine: `Quant\Funding\Rate`, `BinanceFunding`, `Carry`.
+
 ## [0.5.0] - 2026-11-05
 
 ### Added

@@ -35,6 +35,7 @@ The stream reconnects after the exchange's 24-hour disconnect or a network blip,
 | `trades [n]` | the last n trades |
 | `buy <symbol> [quote]` / `sell <symbol>` | a paper order at the last price, through the risk rules |
 | `reset` | forget every trade, back to the initial balance (asks first) |
+| `funding <symbol> <from> [to]` | what a cash-and-carry would have collected in funding — `/quant funding BTC-USDT 2024-11-01 2026-11-01` |
 | `spread start` / `stop` / `status` / `report [days]` | watch the price gap between two exchanges (observation only) and summarize it |
 | `backtest <symbol> <interval> <from> [to] [name=value…]` | run the strategy over past candles — `/quant backtest BTCUSDT 1m 2026-10-01 2026-11-01 fast=5 slow=20` |
 | `sweep <symbol> <interval> <from> [to] name=a..b:step…` | the same backtest over every combination of parameter ranges, as a grid — `/quant sweep BTCUSDT 1d 2024-11-01 2026-11-01 fast=10..30:5 slow=30..100:10` |
@@ -49,6 +50,7 @@ The stream reconnects after the exchange's 24-hour disconnect or a network blip,
 | `quant_order` | A paper order through the risk rules; refused orders throw with the reason |
 | `quant_backtest` | The strategy over past candles, with the report below |
 | `quant_sweep` | Every combination of parameter ranges backtested over the same candles, one row each |
+| `quant_funding` | A carry's funding over a range: gross, net of a round trip, annualized, negative stretches, every month |
 | `quant_spread` | The spread watcher's status, or its report over the last N days |
 
 The `quant` skill tells the model it is a simulation, to place orders only when asked, and to explain the bot's trades from its rules rather than forecast prices.
@@ -78,6 +80,17 @@ The run uses a fresh engine with the same wallet, risk rules and strategy code a
 ```
 
 One good backtest proves little: a parameter can fit two years of one market by luck. A sweep runs the same backtest over every combination of the ranges given — `a..b:step` (the step defaults to 1), or a list `a,b,c`; a plain `name=value` holds that setting for every run — on candles fetched once, and prints the results together. Two swept parameters make a grid, rows for the first and columns for the second, each cell `return / profit factor`; any other number makes a list sorted by return. The last line counts how many combinations beat buy & hold and how many lost money. Read the shape, not the best cell: a good cell among good neighbours is a region worth more tests; a good cell among bad ones is an overfit. A combination the strategy refuses (a fast period not shorter than the slow one) is skipped and counted. At most 500 combinations. The summary is kept under `~/.pig/agent/quant/sweeps/`.
+
+## What a carry would have earned
+
+```
+/quant funding BTC-USDT 2024-11-01 2026-11-01
+/quant funding ETH-USDT 2025-01-01
+```
+
+A cash-and-carry holds the spot and shorts the perpetual for the same amount, so the price cancels out and what is left is the funding the perpetual pays its shorts every eight hours — or charges them, when the rate is negative. Before putting money behind that, measure it: the command fetches the perpetual's funding history (Binance USDⓈ-M, the one public venue with the whole history since 2019; `quant.funding.restUrl`), keeps whole months under `~/.pig/agent/quant/funding/`, and reports the funding collected gross and annualized, the same after one round trip (four legs: spot in and out at `feeRate`, perpetual in and out at `funding.perpFeeRate`, `slippage` on each), what that is a year on the capital both legs tie up (`funding.marginRatio`, the collateral behind the short as a share of its notional — 0.5 is 2x leverage), how many settlements were negative and the longest stretch of them, and every month's total four to a line, so a bad half-year shows. Nothing is traded.
+
+Not in the figures: the basis at entry and exit (the perpetual above or below the spot, a few tenths of a percent either way), a short leg liquidated in a spike if the margin is thin, and the exchange itself. A carry swaps price risk for those.
 
 ## Watching the spread between two exchanges
 
@@ -111,7 +124,8 @@ Under `quant` in `~/.pig/agent/settings.json`:
   "risk": {"maxOrderQuote": 100, "maxExposureQuote": 500, "maxPositions": 3, "stopLossPct": 0.02},
   "warmupCandles": 200,
   "autostart": false,
-  "spread": {"exchanges": ["binance", "okx"], "symbol": "BTCUSDT", "interval": "1m", "thresholdBps": 30, "autostart": false}
+  "spread": {"exchanges": ["binance", "okx"], "symbol": "BTCUSDT", "interval": "1m", "thresholdBps": 30, "autostart": false},
+  "funding": {"restUrl": "https://fapi.binance.com", "perpFeeRate": 0.0005, "marginRatio": 0.5}
 }
 ```
 
@@ -120,6 +134,7 @@ Under `quant` in `~/.pig/agent/settings.json`:
 - `restUrl` / `streamUrl` — Binance keeps several hosts. Where `api.binance.com` is not reachable, `https://data-api.binance.vision` serves market data without a key; the spot testnet is `https://testnet.binance.vision` and `wss://stream.testnet.binance.vision`.
 - `exchange` — `binance` (default) or `okx`. With `okx`, symbols are `BTC-USDT` (a `BTCUSDT` is split for you), the URL defaults become OKX's (`https://www.okx.com`, `wss://ws.okx.com:8443`), history is paged backward 100 candles at a time (slower than Binance's 1,000: a month of 1m candles is ~450 pages), and the stream is subscribed to by message and kept alive with a `ping` every 20 s.
 - `strategy.name` — `ma-cross` (SMA crossover, `fast` and `slow` periods) is the one that ships.
+- `funding` — for `/quant funding`: `restUrl` (Binance USDⓈ-M futures), `perpFeeRate` (one perpetual fill, 0.0005 = 0.05%), `marginRatio` (collateral behind the short as a share of its notional).
 
 A change takes effect at the next session.
 

@@ -35,6 +35,7 @@ pig install git:github.com/owner888/pig-quant
 | `trades [n]` | 最近 n 笔成交 |
 | `buy <symbol> [quote]` / `sell <symbol>` | 按最新价下一笔模拟单，同样过风控 |
 | `reset` | 清空所有成交，回到初始资金（先确认） |
+| `funding <symbol> <from> [to]` | 现货多 + 永续空的「期现套利」在这段时间能收到多少资金费——`/quant funding BTC-USDT 2024-11-01 2026-11-01` |
 | `spread start` / `stop` / `status` / `report [days]` | 观察两个交易所之间的价差（只观察不交易）并汇总 |
 | `backtest <symbol> <interval> <from> [to] [name=value…]` | 用历史 K 线跑策略——`/quant backtest BTCUSDT 1m 2026-10-01 2026-11-01 fast=5 slow=20` |
 | `sweep <symbol> <interval> <from> [to] name=a..b:step…` | 同一个回测跑遍参数区间的每个组合，输出网格——`/quant sweep BTCUSDT 1d 2024-11-01 2026-11-01 fast=10..30:5 slow=30..100:10` |
@@ -49,6 +50,7 @@ pig install git:github.com/owner888/pig-quant
 | `quant_order` | 过风控的模拟下单；被拒时抛出原因 |
 | `quant_backtest` | 用历史 K 线跑策略，返回下面说的报告 |
 | `quant_sweep` | 参数区间的每个组合在同一段 K 线上各跑一次回测，每个组合一行 |
+| `quant_funding` | 一段时间的资金费收益：毛收益、扣一次进出后的净收益、年化、为负的时段、每个月 |
 | `quant_spread` | 价差观察器的状态，或最近 N 天的汇总报告 |
 
 `quant` skill 告诉模型：这是模拟盘；只在用户要求时下单；解释机器人的成交要从策略规则出发，不要预测价格。
@@ -78,6 +80,17 @@ pig install git:github.com/owner888/pig-quant
 ```
 
 一次漂亮的回测说明不了什么：一组参数碰巧贴合某个市场的两年并不稀奇。扫描把同一个回测跑遍给定区间的每个组合——`a..b:step`（步长省略即 1），或列表 `a,b,c`；普通的 `name=value` 对每次运行都固定——K 线只拉一次，结果放在一起看。扫两个参数时输出网格，第一个参数是行、第二个是列，每格是「收益 / 盈亏比」；其他数量则按收益排序列出。最后一行统计多少个组合跑赢买入持有、多少个亏钱。要看的是形状而不是最好的那一格：好格子周围也好，说明这片区域值得继续测；好格子周围都差，就是过拟合。策略拒绝的组合（快线周期不短于慢线）会跳过并计数。最多 500 个组合。汇总保存在 `~/.pig/agent/quant/sweeps/`。
+
+## 期现套利能赚多少
+
+```
+/quant funding BTC-USDT 2024-11-01 2026-11-01
+/quant funding ETH-USDT 2025-01-01
+```
+
+现货买一份、永续合约空一份，价格涨跌互相抵消，剩下的就是永续每 8 小时付给空头的资金费——费率为负时则是空头付钱。投钱之前先量一量：命令拉取永续的资金费率历史（数据源是 Binance U 本位合约，唯一公开 2019 年至今全量的交易所；`quant.funding.restUrl`），整月缓存在 `~/.pig/agent/quant/funding/`，报告：收到的资金费毛收益及年化、扣掉一次进出（四条腿：现货买卖各按 `feeRate`，永续开平各按 `funding.perpFeeRate`，每条腿加 `slippage`）后的净收益、折算到两条腿占用资金上的年化（`funding.marginRatio`，空头腿后面押的保证金占名义的比例，0.5 即 2 倍杠杆）、为负的结算次数和最长连续时间、每个月的合计（一行四个月，半年不行一眼就看见）。不会下单。
+
+没算进去的：进出场时的基差（永续比现货高或低，正负几个千分点）、保证金太薄时空头腿被插针强平、以及交易所本身。套利是把价格风险换成了这几样。
 
 ## 观察两个交易所之间的价差
 
@@ -111,7 +124,8 @@ pig install git:github.com/owner888/pig-quant
   "risk": {"maxOrderQuote": 100, "maxExposureQuote": 500, "maxPositions": 3, "stopLossPct": 0.02},
   "warmupCandles": 200,
   "autostart": false,
-  "spread": {"exchanges": ["binance", "okx"], "symbol": "BTCUSDT", "interval": "1m", "thresholdBps": 30, "autostart": false}
+  "spread": {"exchanges": ["binance", "okx"], "symbol": "BTCUSDT", "interval": "1m", "thresholdBps": 30, "autostart": false},
+  "funding": {"restUrl": "https://fapi.binance.com", "perpFeeRate": 0.0005, "marginRatio": 0.5}
 }
 ```
 
@@ -120,6 +134,7 @@ pig install git:github.com/owner888/pig-quant
 - `restUrl` / `streamUrl`——Binance 有多个域名。`api.binance.com` 不通的地方可用 `https://data-api.binance.vision`（行情数据不需要 key）；现货测试网是 `https://testnet.binance.vision` 和 `wss://stream.testnet.binance.vision`。
 - `exchange`——`binance`（默认）或 `okx`。选 `okx` 时交易对写 `BTC-USDT`（写 `BTCUSDT` 会自动拆），URL 默认换成 OKX 的（`https://www.okx.com`、`wss://ws.okx.com:8443`），历史 K 线从新到旧倒着翻页、每页 100 根（比 Binance 的 1000 慢，1m 一个月约 450 页），行情流连上后发订阅消息、每 20 秒发一次 `ping` 保活。
 - `strategy.name`——内置 `ma-cross`（SMA 金叉死叉，`fast`、`slow` 周期）。
+- `funding`——给 `/quant funding` 用：`restUrl`（Binance U 本位合约）、`perpFeeRate`（永续一次成交的手续费，0.0005 = 0.05%）、`marginRatio`（空头腿后面押的保证金占名义的比例）。
 
 改动在下一次会话生效。
 

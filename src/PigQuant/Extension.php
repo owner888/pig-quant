@@ -11,6 +11,7 @@ use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Logger;
 use Quant\Backtest\Sweep as Grid;
+use Quant\Funding\Carry;
 use Quant\Wallet\Trade;
 use Throwable;
 
@@ -61,7 +62,7 @@ final class Extension
         // -------------------------------------------------------------------------
         $pi->registerCommand(
             name: 'quant',
-            description: 'Dry-run trading: /quant status | start | stop | trades | buy <symbol> [quote] | sell <symbol> | reset | backtest <symbol[,symbol…]> <interval> <from> [to] [fast=9 slow=21 …] | sweep <symbol[,…]> <interval> <from> [to] fast=10..30:5 slow=30..100:10 | spread start|stop|status|report [days]',
+            description: 'Dry-run trading: /quant status | start | stop | trades | buy <symbol> [quote] | sell <symbol> | reset | backtest <symbol[,symbol…]> <interval> <from> [to] [fast=9 slow=21 …] | sweep <symbol[,…]> <interval> <from> [to] fast=10..30:5 slow=30..100:10 | funding <symbol> <from> [to] | spread start|stop|status|report [days]',
             handler: static function (string $args, HookContext $ctx) use ($hub, $pi): void {
                 $parts = preg_split('/\s+/', trim($args), 3, PREG_SPLIT_NO_EMPTY) ?: [];
                 $sub = strtolower($parts[0] ?? 'status');
@@ -94,6 +95,13 @@ final class Extension
                             $spec = Backtest::parseArgs(substr(trim($args), strlen($parts[0])), 'sweep');
                             $sweep = Sweep::run($pi->getSettings(), $spec['symbol'], $spec['interval'], $spec['from'], $spec['to'], $spec['overrides'], static fn (string $line) => $ctx->ui->notify('quant: ' . $line));
                             $ctx->ui->notify("📊 Sweep\n  " . implode("\n  ", Grid::lines($sweep['results'], $sweep['sweeps'])) . ($sweep['skipped'] === [] ? '' : "\n  Skipped " . count($sweep['skipped']) . ': ' . implode('; ', array_unique($sweep['skipped']))) . "\n  Saved to {$sweep['file']}");
+
+                            return;
+
+                        case 'funding':
+                            $spec = Funding::parseArgs(substr(trim($args), strlen($parts[0])));
+                            $run = Funding::run($pi->getSettings(), $spec['symbol'], $spec['from'], $spec['to'], static fn (string $line) => $ctx->ui->notify('quant: ' . $line));
+                            $ctx->ui->notify("📊 Funding carry\n  " . implode("\n  ", Carry::lines($run['summary'], $run['symbol'])));
 
                             return;
 
@@ -146,7 +154,7 @@ final class Extension
                             return;
 
                         default:
-                            $ctx->ui->notify("No '/quant {$sub}'. There is: status, start, stop, trades, buy, sell, reset, backtest, sweep, spread.", 'error');
+                            $ctx->ui->notify("No '/quant {$sub}'. There is: status, start, stop, trades, buy, sell, reset, backtest, sweep, funding, spread.", 'error');
                     }
                 } catch (Throwable $error) {
                     $ctx->ui->notify('❌ quant: ' . $error->getMessage(), 'error');
@@ -292,6 +300,31 @@ final class Extension
                     'table' => Grid::lines($sweep['results'], $sweep['sweeps']),
                     'file' => $sweep['file'],
                 ]))]);
+            },
+        ));
+
+        $pi->registerTool(new CustomTool(
+            name: 'quant_funding',
+            label: 'Quant funding',
+            description: 'What a cash-and-carry (long spot, short the perpetual, same notional) would have collected in funding over a range, from Binance perpetual funding history: gross and net of one round trip (four legs), annualized, on the capital both legs tie up, the share and longest stretch of negative settlements, and every month\'s total. Observation only. The price cancels out in a carry; what remains is funding, exchange risk and the basis at entry/exit (not modelled).',
+            parameters: [
+                'type' => 'object',
+                'properties' => [
+                    'symbol' => ['type' => 'string', 'description' => 'e.g. BTC-USDT or BTCUSDT — the USDT perpetual'],
+                    'from' => ['type' => 'string', 'description' => 'Start, UTC: 2024-11-01'],
+                    'to' => ['type' => 'string', 'description' => 'End, UTC; now when omitted'],
+                ],
+                'required' => ['symbol', 'from'],
+            ],
+            execute: static function (string $id, array $params) use ($pi): AgentToolResult {
+                $run = Funding::run(
+                    $pi->getSettings(),
+                    (string) $params['symbol'],
+                    Backtest::parseDate((string) $params['from']),
+                    isset($params['to']) ? Backtest::parseDate((string) $params['to']) : (int) floor(microtime(true) * 1000),
+                );
+
+                return new AgentToolResult([new TextContent(self::json(['symbol' => $run['symbol']] + $run['summary'] + ['lines' => Carry::lines($run['summary'], $run['symbol'])]))]);
             },
         ));
 
