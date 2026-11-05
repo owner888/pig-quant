@@ -44,6 +44,15 @@ final class Extension
                 }
             }
 
+            if ($config['funding']['watch']['autostart'] === true) {
+                try {
+                    $hub->fundingWatchStart(static fn (string $text) => $ctx->ui->notify($text, 'warning'));
+                } catch (Throwable $error) {
+                    Logger::error('[quant funding] autostart failed: ' . $error->getMessage());
+                    $ctx->ui->notify('quant funding: ' . $error->getMessage(), 'error');
+                }
+            }
+
             // For a machine left to watch: `quant.spread.autostart` starts the watcher with the session.
             if ($config['spread']['autostart'] === true) {
                 try {
@@ -62,7 +71,7 @@ final class Extension
         // -------------------------------------------------------------------------
         $pi->registerCommand(
             name: 'quant',
-            description: 'Dry-run trading: /quant status | start | stop | trades | buy <symbol> [quote] | sell <symbol> | reset | backtest <symbol[,symbol…]> <interval> <from> [to] [fast=9 slow=21 …] | sweep <symbol[,…]> <interval> <from> [to] fast=10..30:5 slow=30..100:10 | funding <symbol> <from> [to] | spread start|stop|status|report [days]',
+            description: 'Dry-run trading: /quant status | start | stop | trades | buy <symbol> [quote] | sell <symbol> | reset | backtest <symbol[,symbol…]> <interval> <from> [to] [fast=9 slow=21 …] | sweep <symbol[,…]> <interval> <from> [to] fast=10..30:5 slow=30..100:10 | funding <symbol> <from> [to] | funding watch start|stop|status | spread start|stop|status|report [days]',
             handler: static function (string $args, HookContext $ctx) use ($hub, $pi): void {
                 $parts = preg_split('/\s+/', trim($args), 3, PREG_SPLIT_NO_EMPTY) ?: [];
                 $sub = strtolower($parts[0] ?? 'status');
@@ -99,6 +108,21 @@ final class Extension
                             return;
 
                         case 'funding':
+                            if (strtolower($parts[1] ?? '') === 'watch') {
+                                $what = strtolower($parts[2] ?? 'status');
+                                match ($what) {
+                                    'start' => $ctx->ui->notify(self::fundingWatchText($hub->fundingWatchStart(static fn (string $text) => $ctx->ui->notify($text, 'warning')), '▶ ')),
+                                    'stop' => (static function () use ($hub, $ctx): void {
+                                        $hub->fundingWatchStop();
+                                        $ctx->ui->notify('⏹ quant funding watch: stopped');
+                                    })(),
+                                    'status' => $ctx->ui->notify(self::fundingWatchText($hub->fundingWatchStatus(), '')),
+                                    default => $ctx->ui->notify("No '/quant funding watch {$what}'. There is: start, stop, status.", 'error'),
+                                };
+
+                                return;
+                            }
+
                             $spec = Funding::parseArgs(substr(trim($args), strlen($parts[0])));
                             $run = Funding::run($pi->getSettings(), $spec['symbol'], $spec['from'], $spec['to'], static fn (string $line) => $ctx->ui->notify('quant: ' . $line));
                             $ctx->ui->notify("📊 Funding carry\n  " . implode("\n  ", Carry::lines($run['summary'], $run['symbol'])));
@@ -329,6 +353,14 @@ final class Extension
         ));
 
         $pi->registerTool(new CustomTool(
+            name: 'quant_funding_watch',
+            label: 'Quant funding watch',
+            description: 'The funding watcher: whether it is polling, each watched perpetual\'s current funding rate per settlement and annualized, when it next settles, which ones are over the alert threshold and since when, and polls that failed. Alerts are also appended to ~/.pig/agent/quant/funding/alerts.jsonl. Start and stop are the person\'s (/quant funding watch start|stop).',
+            parameters: ['type' => 'object', 'properties' => []],
+            execute: static fn (string $id, array $params): AgentToolResult => new AgentToolResult([new TextContent(self::json($hub->fundingWatchStatus()))]),
+        ));
+
+        $pi->registerTool(new CustomTool(
             name: 'quant_spread',
             label: 'Quant spread',
             description: 'The price gap between two exchanges for one symbol, watched live (observation only, nothing is traded). "status": whether it is running, the live gap in bps and the latest prices. "report": the complete minutes of the last N days summarized — mean and percentile gaps, how often and how long the gap cleared the round-trip cost threshold. 1 bps = 0.01%.',
@@ -370,6 +402,26 @@ final class Extension
             icon: '📈',
             commands: ['quant'],
         );
+    }
+
+    /** @param array<string, mixed> $status `FundingWatcher::status()` */
+    private static function fundingWatchText(array $status, string $prefix): string
+    {
+        $head = $status['running']
+            ? sprintf('%squant funding watch: %s every %d min, alert over %.0f%% a year · %d polls this session', $prefix, implode(', ', $status['symbols']), (int) ($status['pollSeconds'] / 60), $status['alertAnnualizedPct'] * 100, $status['polls'])
+            : ($status['problem'] !== null ? "⛔ quant funding watch: stopped on an error — {$status['problem']}" : '⏸ quant funding watch: not started (/quant funding watch start)');
+        $lines = [$head];
+
+        foreach ($status['latest'] as $symbol => $l) {
+            $next = max(0, (int) (($l['nextFundingTime'] - $l['at']) / 60_000));
+            $lines[] = sprintf('  %s: %+.4f%% per settlement ≈ %+.1f%% a year · next settlement in %dh%02dm%s', $symbol, $l['rate'] * 100, $l['annualized'] * 100, intdiv($next, 60), $next % 60, isset($status['above'][$symbol]) ? ' · OVER since ' . date('m-d H:i', intdiv($status['above'][$symbol], 1000)) : '');
+        }
+
+        foreach ($status['failing'] as $symbol => $error) {
+            $lines[] = "  {$symbol}: last poll lost — {$error}";
+        }
+
+        return implode("\n", $lines);
     }
 
     /** @param array<string, mixed> $status `SpreadRunner::status()` */

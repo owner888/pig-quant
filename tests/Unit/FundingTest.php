@@ -9,6 +9,7 @@ use PigQuant\Funding;
 use Quant\Exchange\ExchangeError;
 use Quant\Funding\BinanceFunding;
 use Quant\Funding\Carry;
+use Quant\Funding\Monitor;
 use Quant\Funding\Rate;
 
 final class FundingTest extends TestCase
@@ -95,6 +96,43 @@ final class FundingTest extends TestCase
     public function testNoSettlementsIsSaidPlainly(): void
     {
         $this->assertSame(['BTCUSDT: no funding settlements in the range.'], Carry::lines(Carry::summarize([], 0.001, 0.0005, 0.0005, 0.5), 'BTCUSDT'));
+    }
+
+    public function testTheCurrentRateParsesFromThePremiumIndex(): void
+    {
+        $request = (new BinanceFunding())->currentRequest('https://fapi.binance.com', 'eth-usdt');
+        $this->assertSame('https://fapi.binance.com/fapi/v1/premiumIndex?symbol=ETHUSDT', $request->url);
+
+        $current = (new BinanceFunding())->parseCurrent('{"symbol":"BTCUSDT","markPrice":"79600.10","indexPrice":"79590.00","estimatedSettlePrice":"79595.00","lastFundingRate":"0.00050000","interestRate":"0.00010000","nextFundingTime":1762416000000,"time":1762400000000}');
+        $this->assertSame('BTCUSDT', $current['symbol']);
+        $this->assertSame(0.0005, $current['rate']);
+        $this->assertSame(1_762_416_000_000, $current['nextFundingTime']);
+        $this->assertSame(79600.10, $current['markPrice']);
+
+        $this->expectException(ExchangeError::class);
+        (new BinanceFunding())->parseCurrent('{"code":-1121,"msg":"Invalid symbol."}');
+    }
+
+    public function testTheMonitorSaysOverOnceAndBackOnce(): void
+    {
+        $monitor = new Monitor(alertAnnualized: 0.15);
+
+        $this->assertEqualsWithDelta(0.1095, $monitor->annualized(0.0001), 1e-9, '0.01% three times a day');
+        $this->assertNull($monitor->update('BTCUSDT', 0.0001, 1000), 'under: nothing');
+
+        $above = $monitor->update('BTCUSDT', 0.0002, 2000);
+        $this->assertSame('above', $above['event']);
+        $this->assertEqualsWithDelta(0.219, $above['annualized'], 1e-9);
+        $this->assertSame(2000, $above['since']);
+        $this->assertNull($monitor->update('BTCUSDT', 0.0003, 3000), 'still over: said once');
+        $this->assertSame(['BTCUSDT' => 2000], $monitor->above());
+
+        $back = $monitor->update('BTCUSDT', 0.0001, 4000);
+        $this->assertSame('back', $back['event']);
+        $this->assertSame(2000, $back['since'], 'since when it had been over');
+        $this->assertSame([], $monitor->above());
+        $this->assertNull($monitor->update('BTCUSDT', 0.0001, 5000));
+        $this->assertNull($monitor->update('ETHUSDT', 0.00005, 5000), 'symbols are independent');
     }
 
     public function testArgsParse(): void

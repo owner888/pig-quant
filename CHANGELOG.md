@@ -4,6 +4,12 @@ What changed, newest first, in pig's format: `## [x.y.z] - YYYY-MM-DD`, then onl
 have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`). Notes under
 `## Unreleased` belong to no version yet; the version itself lives in the git tag.
 
+## [0.7.0] - 2026-11-05
+
+### Added
+
+- Added the funding watcher: `/quant funding watch start | stop | status` and the `quant_funding_watch` tool poll the current funding rate of each perpetual in `quant.funding.watch.symbols` every `pollSeconds` (REST, `premiumIndex`), and when a rate's annualized figure first clears `alertAnnualizedPct` say so in the terminal, the log and `~/.pig/agent/quant/funding/alerts.jsonl` — and once more when it drops back, with how long it was over. `funding.watch.autostart` starts it with the session; one process polls, the others forward (`Hub`). A lost poll is retried and then noted, not the end of the watcher; what the exchange refuses is. In the engine: `Quant\Funding\Monitor`, `BinanceFunding::currentRequest()` / `parseCurrent()`; in pig: `PigQuant\FundingWatcher`.
+
 ## [0.6.0] - 2026-11-05
 
 ### Added

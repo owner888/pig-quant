@@ -10,6 +10,7 @@ use Quant\Exchange\Binance;
 use Quant\Exchange\Exchange;
 use Quant\Exchange\Okx;
 use Quant\Funding\BinanceFunding;
+use Quant\Funding\Monitor;
 use Quant\Risk\RiskRules;
 use Quant\Strategy\MovingAverageCross;
 use Quant\Strategy\Strategy;
@@ -35,7 +36,8 @@ use Quant\Wallet\DryRunWallet;
  *   "warmupCandles": 200,
  *   "autostart": false,
  *   "spread": {"exchanges": ["binance", "okx"], "symbol": "BTCUSDT", "interval": "1m", "thresholdBps": 30, "autostart": false},
- *   "funding": {"restUrl": "https://fapi.binance.com", "perpFeeRate": 0.0005, "marginRatio": 0.5}
+ *   "funding": {"restUrl": "https://fapi.binance.com", "perpFeeRate": 0.0005, "marginRatio": 0.5,
+ *               "watch": {"symbols": ["BTC-USDT", "ETH-USDT"], "alertAnnualizedPct": 0.15, "pollSeconds": 300, "autostart": false}}
  * }
  * ```
  */
@@ -57,7 +59,7 @@ final class Config
         'warmupCandles' => 200,
         'autostart' => false,
         'spread' => ['exchanges' => ['binance', 'okx'], 'symbol' => 'BTCUSDT', 'interval' => '1m', 'thresholdBps' => 30.0, 'autostart' => false],
-        'funding' => ['restUrl' => BinanceFunding::REST, 'perpFeeRate' => 0.0005, 'marginRatio' => 0.5],
+        'funding' => ['restUrl' => BinanceFunding::REST, 'perpFeeRate' => 0.0005, 'marginRatio' => 0.5, 'watch' => ['symbols' => ['BTC-USDT', 'ETH-USDT'], 'alertAnnualizedPct' => 0.15, 'pollSeconds' => 300, 'autostart' => false]],
     ];
 
     /** The settings' `quant` block over the defaults. @return array<string, mixed> */
@@ -70,6 +72,7 @@ final class Config
         $config['risk'] = array_replace(self::DEFAULTS['risk'], is_array($given['risk'] ?? null) ? $given['risk'] : []);
         $config['spread'] = array_replace(self::DEFAULTS['spread'], is_array($given['spread'] ?? null) ? $given['spread'] : []);
         $config['funding'] = array_replace(self::DEFAULTS['funding'], is_array($given['funding'] ?? null) ? $given['funding'] : []);
+        $config['funding']['watch'] = array_replace(self::DEFAULTS['funding']['watch'], is_array($given['funding']['watch'] ?? null) ? $given['funding']['watch'] : []);
         $config['symbols'] = array_values(array_map('strval', (array) $config['symbols']));
 
         // The URL defaults written to the settings are Binance's; `exchange: okx` with those
@@ -103,6 +106,19 @@ final class Config
             symbols: $config['symbols'],
             interval: (string) $config['interval'],
             orderQuote: $config['orderQuote'],
+        );
+    }
+
+    /** The funding watcher the `funding.watch` block describes. @param array<string, mixed> $config */
+    public static function fundingWatcher(array $config): FundingWatcher
+    {
+        $watch = $config['funding']['watch'];
+
+        return new FundingWatcher(
+            (string) $config['funding']['restUrl'],
+            array_values(array_map('strval', (array) $watch['symbols'])),
+            new Monitor((float) $watch['alertAnnualizedPct']),
+            (float) $watch['pollSeconds'],
         );
     }
 

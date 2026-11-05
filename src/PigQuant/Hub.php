@@ -154,10 +154,53 @@ final class Hub
         return self::$spread ??= Config::spreadRunner(Config::load($this->pi->getSettings()));
     }
 
+    // ---- the funding watcher --------------------------------------------------------------
+
+    private static ?FundingWatcher $funding = null;
+
+    /** @param \Closure(string): void|null $notify where an alert is said out loud @return array<string, mixed> the status afterwards */
+    public function fundingWatchStart(?\Closure $notify = null): array
+    {
+        return $this->call('POST', '/funding/start', [], function () use ($notify): array {
+            $this->own();
+
+            // A start forwarded from another process brings no terminal; keep the one that is set.
+            if ($notify !== null) {
+                $this->fundingWatcher()->onAlert($notify);
+            }
+
+            $this->fundingWatcher()->start();
+
+            return $this->fundingWatcher()->status();
+        });
+    }
+
+    /** @return array<string, mixed> the status afterwards */
+    public function fundingWatchStop(): array
+    {
+        return $this->call('POST', '/funding/stop', [], function (): array {
+            $this->fundingWatcher()->stop();
+
+            return $this->fundingWatcher()->status();
+        });
+    }
+
+    /** @return array<string, mixed> */
+    public function fundingWatchStatus(): array
+    {
+        return $this->call('GET', '/funding/status', [], fn (): array => $this->fundingWatcher()->status());
+    }
+
+    private function fundingWatcher(): FundingWatcher
+    {
+        return self::$funding ??= Config::fundingWatcher(Config::load($this->pi->getSettings()));
+    }
+
     /** On the way out: stop the streams, save the wallet, give the ownership up. */
     public function shutdown(): void
     {
         self::$spread?->stop();
+        self::$funding?->stop();
 
         if (self::$runner !== null) {
             self::$runner->stop();
@@ -278,6 +321,9 @@ final class Hub
             'POST /spread/start' => $this->spreadStart(),
             'POST /spread/stop' => $this->spreadStop(),
             'GET /spread/status' => $this->spreadStatus(),
+            'POST /funding/start' => $this->fundingWatchStart(),
+            'POST /funding/stop' => $this->fundingWatchStop(),
+            'GET /funding/status' => $this->fundingWatchStatus(),
             default => throw new \RuntimeException("No such operation: {$method} {$path}"),
         };
     }

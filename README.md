@@ -36,6 +36,7 @@ The stream reconnects after the exchange's 24-hour disconnect or a network blip,
 | `buy <symbol> [quote]` / `sell <symbol>` | a paper order at the last price, through the risk rules |
 | `reset` | forget every trade, back to the initial balance (asks first) |
 | `funding <symbol> <from> [to]` | what a cash-and-carry would have collected in funding — `/quant funding BTC-USDT 2024-11-01 2026-11-01` |
+| `funding watch start` / `stop` / `status` | poll the current funding rates and say when one clears `funding.watch.alertAnnualizedPct` |
 | `spread start` / `stop` / `status` / `report [days]` | watch the price gap between two exchanges (observation only) and summarize it |
 | `backtest <symbol> <interval> <from> [to] [name=value…]` | run the strategy over past candles — `/quant backtest BTCUSDT 1m 2026-10-01 2026-11-01 fast=5 slow=20` |
 | `sweep <symbol> <interval> <from> [to] name=a..b:step…` | the same backtest over every combination of parameter ranges, as a grid — `/quant sweep BTCUSDT 1d 2024-11-01 2026-11-01 fast=10..30:5 slow=30..100:10` |
@@ -51,6 +52,7 @@ The stream reconnects after the exchange's 24-hour disconnect or a network blip,
 | `quant_backtest` | The strategy over past candles, with the report below |
 | `quant_sweep` | Every combination of parameter ranges backtested over the same candles, one row each |
 | `quant_funding` | A carry's funding over a range: gross, net of a round trip, annualized, negative stretches, every month |
+| `quant_funding_watch` | The funding watcher: current rates, which are over the threshold and since when |
 | `quant_spread` | The spread watcher's status, or its report over the last N days |
 
 The `quant` skill tells the model it is a simulation, to place orders only when asked, and to explain the bot's trades from its rules rather than forecast prices.
@@ -92,6 +94,8 @@ A cash-and-carry holds the spot and shorts the perpetual for the same amount, so
 
 Not in the figures: the basis at entry and exit (the perpetual above or below the spot, a few tenths of a percent either way), a short leg liquidated in a spike if the margin is thin, and the exchange itself. A carry swaps price risk for those.
 
+Measured over two years the carry paid about 3% a year on capital, with a quarter of it in two bull-mania months — less than a treasury for more risk, except in those months. So the watcher: `/quant funding watch start` polls each symbol in `funding.watch.symbols` every `pollSeconds` (five minutes), and when a rate annualized (`rate × 3 × 365`) first clears `alertAnnualizedPct` (15% a year) it says so in the terminal that started it, logs it, and appends a line to `~/.pig/agent/quant/funding/alerts.jsonl`; the same once when the rate drops back, with how long it had been over. `status` shows every symbol's rate, its annualized figure, when it next settles and which are over. `funding.watch.autostart: true` starts it with every session on a machine left to watch. Like the dry run, one process polls and the others forward to it.
+
 ## Watching the spread between two exchanges
 
 ```
@@ -125,7 +129,8 @@ Under `quant` in `~/.pig/agent/settings.json`:
   "warmupCandles": 200,
   "autostart": false,
   "spread": {"exchanges": ["binance", "okx"], "symbol": "BTCUSDT", "interval": "1m", "thresholdBps": 30, "autostart": false},
-  "funding": {"restUrl": "https://fapi.binance.com", "perpFeeRate": 0.0005, "marginRatio": 0.5}
+  "funding": {"restUrl": "https://fapi.binance.com", "perpFeeRate": 0.0005, "marginRatio": 0.5,
+              "watch": {"symbols": ["BTC-USDT", "ETH-USDT"], "alertAnnualizedPct": 0.15, "pollSeconds": 300, "autostart": false}}
 }
 ```
 
@@ -134,7 +139,7 @@ Under `quant` in `~/.pig/agent/settings.json`:
 - `restUrl` / `streamUrl` — Binance keeps several hosts. Where `api.binance.com` is not reachable, `https://data-api.binance.vision` serves market data without a key; the spot testnet is `https://testnet.binance.vision` and `wss://stream.testnet.binance.vision`.
 - `exchange` — `binance` (default) or `okx`. With `okx`, symbols are `BTC-USDT` (a `BTCUSDT` is split for you), the URL defaults become OKX's (`https://www.okx.com`, `wss://ws.okx.com:8443`), history is paged backward 100 candles at a time (slower than Binance's 1,000: a month of 1m candles is ~450 pages), and the stream is subscribed to by message and kept alive with a `ping` every 20 s.
 - `strategy.name` — `ma-cross` (SMA crossover, `fast` and `slow` periods) is the one that ships.
-- `funding` — for `/quant funding`: `restUrl` (Binance USDⓈ-M futures), `perpFeeRate` (one perpetual fill, 0.0005 = 0.05%), `marginRatio` (collateral behind the short as a share of its notional).
+- `funding` — for `/quant funding`: `restUrl` (Binance USDⓈ-M futures), `perpFeeRate` (one perpetual fill, 0.0005 = 0.05%), `marginRatio` (collateral behind the short as a share of its notional). `funding.watch` — the watcher: `symbols`, `alertAnnualizedPct` (0.15 = 15% a year), `pollSeconds` (at least 30), `autostart`.
 
 A change takes effect at the next session.
 

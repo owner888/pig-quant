@@ -38,6 +38,33 @@ final class BinanceFunding
         return new HttpRequest('GET', rtrim($restUrl, '/') . '/fapi/v1/fundingRate?' . $query);
     }
 
+    /** The current (next-settlement) rate and when it settles: `GET /fapi/v1/premiumIndex?symbol=`. */
+    public function currentRequest(string $restUrl, string $symbol): HttpRequest
+    {
+        return new HttpRequest('GET', rtrim($restUrl, '/') . '/fapi/v1/premiumIndex?symbol=' . $this->symbol($symbol));
+    }
+
+    /**
+     * @return array{symbol: string, rate: float, nextFundingTime: int, markPrice: float, time: int}
+     * @throws ExchangeError when the body is not a premium index
+     */
+    public function parseCurrent(string $body): array
+    {
+        $data = json_decode($body, true);
+
+        if (!is_array($data) || !isset($data['symbol'], $data['lastFundingRate'], $data['nextFundingTime'])) {
+            throw new ExchangeError('Binance answered something other than a premium index: ' . substr($body, 0, 300));
+        }
+
+        return [
+            'symbol' => (string) $data['symbol'],
+            'rate' => (float) $data['lastFundingRate'],
+            'nextFundingTime' => (int) $data['nextFundingTime'],
+            'markPrice' => (float) ($data['markPrice'] ?? 0),
+            'time' => (int) ($data['time'] ?? 0),
+        ];
+    }
+
     /**
      * @return list<Rate> oldest first
      * @throws ExchangeError when the body is not a funding list
