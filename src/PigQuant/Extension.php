@@ -48,13 +48,20 @@ final class Extension
         // -------------------------------------------------------------------------
         $pi->registerCommand(
             name: 'quant',
-            description: 'Dry-run trading: /quant status | start | stop | trades | buy <symbol> [quote] | sell <symbol> | reset',
-            handler: static function (string $args, HookContext $ctx) use ($hub): void {
+            description: 'Dry-run trading: /quant status | start | stop | trades | buy <symbol> [quote] | sell <symbol> | reset | backtest <symbol> <interval> <from> [to] [fast=9 slow=21 …]',
+            handler: static function (string $args, HookContext $ctx) use ($hub, $pi): void {
                 $parts = preg_split('/\s+/', trim($args), 3, PREG_SPLIT_NO_EMPTY) ?: [];
                 $sub = strtolower($parts[0] ?? 'status');
 
                 try {
                     switch ($sub) {
+                        case 'backtest':
+                            $spec = Backtest::parseArgs(substr(trim($args), strlen($parts[0])));
+                            $run = Backtest::run($pi->getSettings(), $spec['symbol'], $spec['interval'], $spec['from'], $spec['to'], $spec['overrides'], static fn (string $line) => $ctx->ui->notify('quant: ' . $line));
+                            $ctx->ui->notify("📊 Backtest\n  " . implode("\n  ", $run['report']->lines()) . "\n  Saved to {$run['file']}");
+
+                            return;
+
                         case 'start':
                             $status = $hub->start();
                             $ctx->ui->notify('✅ quant: streaming ' . implode(', ', $status['symbols']) . " {$status['interval']} on {$status['exchange']} (dry run, pid {$status['ownerPid']})");
@@ -104,7 +111,7 @@ final class Extension
                             return;
 
                         default:
-                            $ctx->ui->notify("No '/quant {$sub}'. There is: status, start, stop, trades, buy, sell, reset.", 'error');
+                            $ctx->ui->notify("No '/quant {$sub}'. There is: status, start, stop, trades, buy, sell, reset, backtest.", 'error');
                     }
                 } catch (Throwable $error) {
                     $ctx->ui->notify('❌ quant: ' . $error->getMessage(), 'error');
@@ -175,6 +182,40 @@ final class Extension
                 isset($params['quantity']) ? (float) $params['quantity'] : null,
                 (string) ($params['reason'] ?? 'model'),
             )))]),
+        ));
+
+        $pi->registerTool(new CustomTool(
+            name: 'quant_backtest',
+            label: 'Quant backtest',
+            description: 'Run the configured strategy over past candles (fetched from the exchange, cached by month) and report: final equity, return vs buy-and-hold, max drawdown, trades, win rate, profit factor, fees, average hold, the last trades and a downsampled equity curve. The dry-run wallet is not touched. Overrides change one run only. Takes seconds to a minute for a month of 1m candles.',
+            parameters: [
+                'type' => 'object',
+                'properties' => [
+                    'symbol' => ['type' => 'string', 'description' => 'e.g. BTCUSDT'],
+                    'interval' => ['type' => 'string', 'description' => 'Candle interval: 1m, 5m, 15m, 1h, 4h, 1d'],
+                    'from' => ['type' => 'string', 'description' => 'Start, UTC: 2026-10-01 or 2026-10-01T09:30'],
+                    'to' => ['type' => 'string', 'description' => 'End, UTC; now when omitted'],
+                    'overrides' => ['type' => 'object', 'description' => 'Settings for this run only, by name: ' . implode(', ', Backtest::OVERRIDES), 'additionalProperties' => ['type' => 'number']],
+                ],
+                'required' => ['symbol', 'interval', 'from'],
+            ],
+            execute: static function (string $id, array $params) use ($pi): AgentToolResult {
+                $run = Backtest::run(
+                    $pi->getSettings(),
+                    (string) $params['symbol'],
+                    (string) $params['interval'],
+                    Backtest::parseDate((string) $params['from']),
+                    isset($params['to']) ? Backtest::parseDate((string) $params['to']) : (int) floor(microtime(true) * 1000),
+                    is_array($params['overrides'] ?? null) ? $params['overrides'] : [],
+                );
+                $report = $run['report']->toArray();
+                // The curve and every trade would be most of the tokens; the model gets the figures and the last 20 trades.
+                $report['curve'] = count($run['report']->curve);
+                $report['tradeList'] = array_slice($report['tradeList'], -20);
+                $report['file'] = $run['file'];
+
+                return new AgentToolResult([new TextContent(self::json($report))]);
+            },
         ));
 
         // -------------------------------------------------------------------------

@@ -38,11 +38,22 @@ final class Binance implements Exchange
         return strtoupper(str_replace(['/', '-', '_', ' '], '', $symbol));
     }
 
-    public function candlesRequest(string $symbol, string $interval, int $limit): HttpRequest
+    public function candlesPerRequest(): int
+    {
+        return 1000;
+    }
+
+    public function candlesRequest(string $symbol, string $interval, int $limit, ?int $startTime = null, ?int $endTime = null): HttpRequest
     {
         self::checkInterval($interval);
-        $limit = max(1, min(1000, $limit));
-        $query = http_build_query(['symbol' => $this->symbol($symbol), 'interval' => $interval, 'limit' => $limit]);
+        $limit = max(1, min($this->candlesPerRequest(), $limit));
+        $query = http_build_query(array_filter([
+            'symbol' => $this->symbol($symbol),
+            'interval' => $interval,
+            'limit' => $limit,
+            'startTime' => $startTime,
+            'endTime' => $endTime,
+        ], static fn ($v) => $v !== null));
 
         return new HttpRequest('GET', rtrim($this->rest, '/') . '/api/v3/klines?' . $query);
     }

@@ -35,6 +35,7 @@ The stream reconnects after the exchange's 24-hour disconnect or a network blip,
 | `trades [n]` | the last n trades |
 | `buy <symbol> [quote]` / `sell <symbol>` | a paper order at the last price, through the risk rules |
 | `reset` | forget every trade, back to the initial balance (asks first) |
+| `backtest <symbol> <interval> <from> [to] [name=value…]` | run the strategy over past candles — `/quant backtest BTCUSDT 1m 2026-10-01 2026-11-01 fast=5 slow=20` |
 
 ### Tools
 
@@ -44,12 +45,24 @@ The stream reconnects after the exchange's 24-hour disconnect or a network blip,
 | `quant_candles` | The last candles held for a symbol (no network call) |
 | `quant_trades` | The paper trades, with the reason for each |
 | `quant_order` | A paper order through the risk rules; refused orders throw with the reason |
+| `quant_backtest` | The strategy over past candles, with the report below |
 
 The `quant` skill tells the model it is a simulation, to place orders only when asked, and to explain the bot's trades from its rules rather than forecast prices.
 
 ### Web UI
 
 With `pig web`, the sidebar's Extensions group has a **Quant dry run** panel: state, equity, positions (with a Close button each), the last trades, and Start / Stop / Reset. `/quant` in the page opens it.
+
+## Backtesting
+
+```
+/quant backtest BTCUSDT 1m 2026-10-01 2026-11-01
+/quant backtest ETHUSDT 15m 2026-06-01 fast=5 slow=20 stopLossPct=0.03
+```
+
+Dates are UTC; `to` defaults to now. The candles come from the exchange's REST endpoint a page at a time and every whole calendar month is kept under `~/.pig/agent/quant/candles/`, so the second run over the same months downloads nothing. `name=value` overrides a setting for this run only — `initialQuote`, `feeRate`, `slippage`, `orderQuote`, `fast`, `slow`, `maxOrderQuote`, `maxExposureQuote`, `maxPositions`, `stopLossPct`, `warmupCandles` — so parameters are compared without editing settings. Before the range, `warmupCandles` candles are seeded so the first candle can already be judged.
+
+The run uses a fresh engine with the same wallet, risk rules and strategy code as the dry run; the dry run's wallet is not touched. The report: final equity and return, the same range held outright (buy & hold) for comparison, max drawdown, trades won and lost, win rate, profit factor, fees and their share of the initial balance, average holding time, a position still open at the end (valued at the last close, not sold), the trades, and an equity curve downsampled to 500 points. It is kept as JSON under `~/.pig/agent/quant/backtests/`, named by what it tested.
 
 ## Settings
 
@@ -112,7 +125,7 @@ The tests cover the engine only and need nothing from pig but its PHPUnit.
 
 ## Not yet
 
-Backtesting, real orders, charts, more exchanges and strategies. The engine is shaped for them: a backtest is `seed()` plus `onCandle()` over history; a real exchange is the wallet's interface over the exchange's order endpoints.
+Real orders, charts, more exchanges and strategies. A real exchange is the wallet's interface over the exchange's order endpoints.
 
 ## License
 

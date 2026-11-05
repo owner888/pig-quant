@@ -4,6 +4,17 @@ What changed, newest first, in pig's format: `## [x.y.z] - YYYY-MM-DD`, then onl
 have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`). Notes under
 `## Unreleased` belong to no version yet; the version itself lives in the git tag.
 
+## [0.2.0] - 2026-11-05
+
+### New Features
+
+- Backtesting: `/quant backtest <symbol> <interval> <from> [to] [name=value…]` and the `quant_backtest` tool run the configured strategy over past candles — fetched from the exchange a page at a time, whole months cached under `~/.pig/agent/quant/candles/` — on a fresh engine with the dry run's wallet, risk rules and strategy code, and report final equity and return, buy & hold for comparison, max drawdown, trades won and lost, win rate, profit factor, fees, average hold, an open position at the end, the trades and a downsampled equity curve, kept as JSON under `~/.pig/agent/quant/backtests/`. `name=value` overrides a setting for one run. In the engine: `Quant\Backtest\Backtester` and `Report`, `Engine::equity()`, `Interval::milliseconds()`, and `Exchange::candlesRequest()` takes a start and end time.
+
+### Changed
+
+- History and warm-up requests go through pig's `Retrying::fetch()` (pig 1.6.1 or later) instead of loops of their own: a page the network loses or a 429/5xx is asked for again, three times with a growing wait; a 4xx is not.
+- A month the backtest range only touches — the warm-up before it, the month in progress — is fetched for the part asked and not cached; only whole, finished months are kept.
+
 ## [0.1.0] - 2026-11-04
 
 ### New Features

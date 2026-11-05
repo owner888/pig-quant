@@ -23,7 +23,14 @@ interface Exchange
     /** Normalize a symbol the person typed (`btc/usdt`, `BTC-USDT`) to the exchange's own form. */
     public function symbol(string $symbol): string;
 
-    public function candlesRequest(string $symbol, string $interval, int $limit): HttpRequest;
+    /**
+     * @param int|null $startTime Unix milliseconds; the candles from this open time on
+     * @param int|null $endTime Unix milliseconds; the candles up to this time
+     */
+    public function candlesRequest(string $symbol, string $interval, int $limit, ?int $startTime = null, ?int $endTime = null): HttpRequest;
+
+    /** The most candles one `candlesRequest()` may ask for. */
+    public function candlesPerRequest(): int;
 
     /**
      * The candles in a `candlesRequest()` response body, oldest first.

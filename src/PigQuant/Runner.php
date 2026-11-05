@@ -6,6 +6,7 @@ namespace PigQuant;
 
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
+use Pig\Ai\Http\Retrying;
 use Pig\Ai\Http\WebSocket;
 use Pig\Async\AbortController;
 use Pig\Async\AbortError;
@@ -186,8 +187,11 @@ final class Runner
 
         foreach ($this->engine->symbols as $symbol) {
             $request = $exchange->candlesRequest($symbol, $this->engine->interval, $this->warmupCandles);
-            $response = $http->send(new Request($request->method, $request->url, $request->headers, $request->body));
-            $body = $response->body->all();
+            [$response, $body] = Retrying::fetch(
+                $http,
+                new Request($request->method, $request->url, $request->headers, $request->body),
+                onRetry: static fn (int $attempt, string $reason, float $wait) => Logger::warning(sprintf('[quant] %s history: %s — trying again in %.0fs', $symbol, $reason, $wait)),
+            );
 
             if (!$response->isSuccessful()) {
                 throw new ExchangeError("{$exchange->name()} answered {$response->status} {$response->reason} for {$symbol} candles: " . substr($body, 0, 300));

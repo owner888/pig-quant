@@ -171,6 +171,12 @@ final class Engine
         return $trade;
     }
 
+    /** Cash plus every position at the last price seen for it. */
+    public function equity(): float
+    {
+        return $this->wallet->equity(array_intersect_key($this->prices, $this->wallet->positions()));
+    }
+
     public function price(string $symbol): ?float
     {
         return $this->prices[$this->exchange->symbol($symbol)] ?? null;
@@ -194,8 +200,6 @@ final class Engine
             ];
         }
 
-        $prices = array_intersect_key($this->prices, $this->wallet->positions());
-
         return [
             'exchange' => $this->exchange->name(),
             'strategy' => $this->strategy->name(),
@@ -207,7 +211,7 @@ final class Engine
             'quoteAsset' => $this->wallet->quoteAsset,
             'initialQuote' => $this->wallet->initialQuote,
             'quote' => $this->wallet->quote(),
-            'equity' => $this->wallet->equity($prices),
+            'equity' => $this->equity(),
             'realizedPnl' => $this->wallet->realizedPnl(),
             'positions' => $positions,
             'trades' => count($this->wallet->trades()),

@@ -35,6 +35,7 @@ pig install git:github.com/owner888/pig-quant
 | `trades [n]` | 最近 n 笔成交 |
 | `buy <symbol> [quote]` / `sell <symbol>` | 按最新价下一笔模拟单，同样过风控 |
 | `reset` | 清空所有成交，回到初始资金（先确认） |
+| `backtest <symbol> <interval> <from> [to] [name=value…]` | 用历史 K 线跑策略——`/quant backtest BTCUSDT 1m 2026-10-01 2026-11-01 fast=5 slow=20` |
 
 ### 工具
 
@@ -44,12 +45,24 @@ pig install git:github.com/owner888/pig-quant
 | `quant_candles` | 某交易对当前持有的最近 K 线（不发网络请求） |
 | `quant_trades` | 模拟成交记录，带每笔的原因 |
 | `quant_order` | 过风控的模拟下单；被拒时抛出原因 |
+| `quant_backtest` | 用历史 K 线跑策略，返回下面说的报告 |
 
 `quant` skill 告诉模型：这是模拟盘；只在用户要求时下单；解释机器人的成交要从策略规则出发，不要预测价格。
 
 ### Web UI
 
 `pig web` 的侧边栏 Extensions 组里有一个「量化模拟盘」面板：状态、权益、持仓（每个有平仓按钮）、最近成交，以及启动 / 停止 / 重置。页面里输入 `/quant` 可打开它。
+
+## 回测
+
+```
+/quant backtest BTCUSDT 1m 2026-10-01 2026-11-01
+/quant backtest ETHUSDT 15m 2026-06-01 fast=5 slow=20 stopLossPct=0.03
+```
+
+日期按 UTC；`to` 省略即到现在。K 线通过交易所 REST 分页拉取，整月的数据缓存在 `~/.pig/agent/quant/candles/`，同区间第二次跑不再下载。`name=value` 只覆盖本次运行的设置——`initialQuote`、`feeRate`、`slippage`、`orderQuote`、`fast`、`slow`、`maxOrderQuote`、`maxExposureQuote`、`maxPositions`、`stopLossPct`、`warmupCandles`——换参数对比不用改设置文件。区间之前会先灌入 `warmupCandles` 根 K 线预热，第一根就能判断。
+
+回测用一个全新的引擎，钱包、风控、策略和模拟盘是同一套代码；模拟盘的钱包不受影响。报告包含：最终权益和收益率、同区间「买入持有」的收益作对照、最大回撤、盈亏笔数、胜率、盈亏比、手续费及其占初始资金的比例、平均持仓时长、结束时仍未平的仓位（按最后收盘价估值，不强制卖出）、成交列表，以及降采样到 500 点的权益曲线。结果以 JSON 存在 `~/.pig/agent/quant/backtests/`，文件名就是测试的内容。
 
 ## 配置
 
@@ -112,7 +125,7 @@ PIG_DIR=~/Development/owner/pig ~/Development/owner/pig/vendor/bin/phpunit -c ph
 
 ## 还没做
 
-回测、真实下单、图表、更多交易所和策略。引擎的形状已经为它们准备好：回测就是 `seed()` 加对历史跑 `onCandle()`；真实交易是钱包接口对接交易所的下单端点。
+真实下单、图表、更多交易所和策略。真实交易是钱包接口对接交易所的下单端点。
 
 ## 许可
 
