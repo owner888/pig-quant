@@ -9,6 +9,7 @@ use Quant\Exchange\Exchange;
 use Quant\Market\Candle;
 use Quant\Market\Series;
 use Quant\Market\Side;
+use Quant\Risk\Limit;
 use Quant\Risk\RiskRules;
 use Quant\Strategy\Strategy;
 use Quant\Wallet\DryRunWallet;
@@ -39,9 +40,12 @@ final class Engine
 
     private int $candlesSeen = 0;
 
+    /** What one strategy buy spends: an amount, or a share of the free cash (`"all"` compounds). */
+    public readonly Limit $orderQuote;
+
     /**
      * @param list<string> $symbols
-     * @param float $orderQuote what one strategy buy spends
+     * @param Limit|float|string $orderQuote what one strategy buy spends: `100`, `"50%"` of the free cash, or `"all"` of it
      */
     public function __construct(
         public readonly Exchange $exchange,
@@ -50,15 +54,13 @@ final class Engine
         public readonly RiskRules $risk,
         public readonly array $symbols,
         public readonly string $interval,
-        public readonly float $orderQuote,
+        Limit|float|string $orderQuote,
     ) {
         if ($symbols === []) {
             throw new \InvalidArgumentException('The engine trades at least one symbol.');
         }
 
-        if ($orderQuote <= 0) {
-            throw new \InvalidArgumentException("orderQuote is positive, not {$orderQuote}.");
-        }
+        $this->orderQuote = Limit::parse($orderQuote);
 
         foreach ($symbols as $symbol) {
             $this->series[$exchange->symbol($symbol)] = new Series($exchange->symbol($symbol), $interval);
@@ -118,7 +120,8 @@ final class Engine
                 return;
             }
 
-            $refused = $this->risk->refuseBuy($symbol, $this->orderQuote, $this->wallet);
+            $quoteAmount = $this->orderQuote->quote($this->wallet->quote());
+            $refused = $this->risk->refuseBuy($symbol, $quoteAmount, $this->wallet, $this->equity());
 
             if ($refused !== null) {
                 $this->emit('refused', ['symbol' => $symbol, 'reason' => $refused]);
@@ -126,7 +129,7 @@ final class Engine
                 return;
             }
 
-            $trade = $this->wallet->buy($symbol, $this->orderQuote, $candle->close, $candle->closeTime, $this->strategy->name());
+            $trade = $this->wallet->buy($symbol, $quoteAmount, $candle->close, $candle->closeTime, $this->strategy->name());
         } else {
             if ($position === null) {
                 return;
@@ -152,8 +155,8 @@ final class Engine
         $time = (int) floor(microtime(true) * 1000);
 
         if ($side === Side::Buy) {
-            $quoteAmount ??= $this->orderQuote;
-            $refused = $this->risk->refuseBuy($symbol, $quoteAmount, $this->wallet);
+            $quoteAmount ??= $this->orderQuote->quote($this->wallet->quote());
+            $refused = $this->risk->refuseBuy($symbol, $quoteAmount, $this->wallet, $this->equity());
 
             if ($refused !== null) {
                 $this->emit('refused', ['symbol' => $symbol, 'reason' => $refused]);
@@ -206,7 +209,7 @@ final class Engine
             'parameters' => $this->strategy->parameters(),
             'interval' => $this->interval,
             'symbols' => array_keys($this->series),
-            'orderQuote' => $this->orderQuote,
+            'orderQuote' => $this->orderQuote->value(),
             'risk' => $this->risk->toArray(),
             'quoteAsset' => $this->wallet->quoteAsset,
             'initialQuote' => $this->wallet->initialQuote,

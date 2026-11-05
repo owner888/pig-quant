@@ -95,10 +95,10 @@ final class Config
             exchange: self::exchange($config),
             strategy: self::strategy($config['strategy']),
             wallet: new DryRunWallet((string) $config['quoteAsset'], (float) $config['initialQuote'], (float) $config['feeRate'], (float) $config['slippage']),
-            risk: new RiskRules((float) $config['risk']['maxOrderQuote'], (float) $config['risk']['maxExposureQuote'], (int) $config['risk']['maxPositions'], (float) $config['risk']['stopLossPct']),
+            risk: new RiskRules($config['risk']['maxOrderQuote'], $config['risk']['maxExposureQuote'], (int) $config['risk']['maxPositions'], (float) $config['risk']['stopLossPct']),
             symbols: $config['symbols'],
             interval: (string) $config['interval'],
-            orderQuote: (float) $config['orderQuote'],
+            orderQuote: $config['orderQuote'],
         );
     }
 

@@ -9,7 +9,9 @@ use Pig\CodingAgent\Config as PigConfig;
 use Pig\CodingAgent\Settings;
 use Quant\Backtest\Backtester;
 use Quant\Backtest\Report;
+use Quant\Market\Candle;
 use Quant\Market\Interval;
+use Quant\Risk\Limit;
 
 /**
  * A backtest as `/quant backtest` and `quant_backtest` ask for it: a symbol, an interval, a
@@ -30,35 +32,20 @@ final class Backtest
     }
 
     /**
-     * @param array<string, string|float|int> $overrides by `OVERRIDES` name
+     * @param array<string, string|float|int> $overrides by `OVERRIDES` name; `orderQuote`, `maxOrderQuote` and `maxExposureQuote` may be `"50%"` or `"all"`
      * @param Closure(string): void|null $progress a line at a time
      * @return array{report: Report, file: string}
      */
     public static function run(?Settings $settings, string $symbol, string $interval, int $from, int $to, array $overrides = [], ?Closure $progress = null): array
     {
-        if ($to <= $from) {
-            throw new \InvalidArgumentException('The range ends before it starts.');
-        }
-
         $config = self::configure(Config::load($settings), $overrides);
         $config['symbols'] = [$symbol];
         $config['interval'] = $interval;
         $engine = Config::engine($config);
-        $symbol = $engine->exchange->symbol($symbol);
-
-        $history = new History($engine->exchange);
-        $warmupFrom = $from - (int) $config['warmupCandles'] * Interval::milliseconds($interval);
-        $warmup = $history->range($symbol, $interval, $warmupFrom, $from, $progress);
-        $candles = $history->range($symbol, $interval, $from, $to, $progress);
-
-        if ($candles === []) {
-            throw new \RuntimeException("{$engine->exchange->name()} has no {$symbol} {$interval} candles between " . gmdate('Y-m-d', intdiv($from, 1000)) . ' and ' . gmdate('Y-m-d', intdiv($to, 1000)) . '.');
-        }
+        ['symbol' => $symbol, 'warmup' => $warmup, 'candles' => $candles] = self::candles($config, $symbol, $interval, $from, $to, $progress);
 
         if ($progress !== null) {
-
             $progress(sprintf('%s %s: %d candles (+%d warm-up); running %s %s', $symbol, $interval, count($candles), count($warmup), $engine->strategy->name(), json_encode($engine->strategy->parameters())));
-
         }
 
         $report = Backtester::run($engine, $symbol, $warmup, $candles, static function (int $done, int $total) use ($progress): void {
@@ -73,6 +60,34 @@ final class Backtest
     }
 
     /**
+     * The warm-up and the range for a run, from the exchange the settings name, through the
+     * monthly cache. Shared by a backtest and by every run of a sweep.
+     *
+     * @param array<string, mixed> $config
+     * @param Closure(string): void|null $progress
+     * @return array{symbol: string, warmup: list<Candle>, candles: list<Candle>}
+     */
+    public static function candles(array $config, string $symbol, string $interval, int $from, int $to, ?Closure $progress = null): array
+    {
+        if ($to <= $from) {
+            throw new \InvalidArgumentException('The range ends before it starts.');
+        }
+
+        $exchange = Config::exchange($config);
+        $symbol = $exchange->symbol($symbol);
+        $history = new History($exchange);
+        $warmupFrom = $from - (int) $config['warmupCandles'] * Interval::milliseconds($interval);
+        $warmup = $history->range($symbol, $interval, $warmupFrom, $from, $progress);
+        $candles = $history->range($symbol, $interval, $from, $to, $progress);
+
+        if ($candles === []) {
+            throw new \RuntimeException("{$exchange->name()} has no {$symbol} {$interval} candles between " . gmdate('Y-m-d', intdiv($from, 1000)) . ' and ' . gmdate('Y-m-d', intdiv($to, 1000)) . '.');
+        }
+
+        return ['symbol' => $symbol, 'warmup' => $warmup, 'candles' => $candles];
+    }
+
+    /**
      * The settings with the overrides applied, each parsed as the number it is.
      *
      * @param array<string, mixed> $config
@@ -84,6 +99,19 @@ final class Backtest
         foreach ($overrides as $name => $value) {
             if (!in_array($name, self::OVERRIDES, true)) {
                 throw new \InvalidArgumentException("'{$name}' is not a setting a backtest can override; there is: " . implode(', ', self::OVERRIDES) . '.');
+            }
+
+            // The order size and the two amount limits may be a share: "50%" or "all".
+            if (in_array($name, ['orderQuote', 'maxOrderQuote', 'maxExposureQuote'], true) && Limit::isShare($value)) {
+                $parsed = Limit::parse((string) $value)->value();
+
+                if ($name === 'orderQuote') {
+                    $config[$name] = $parsed;
+                } else {
+                    $config['risk'][$name] = $parsed;
+                }
+
+                continue;
             }
 
             if (!is_numeric($value)) {
@@ -110,7 +138,7 @@ final class Backtest
      *
      * @return array{symbol: string, interval: string, from: int, to: int, overrides: array<string, string>}
      */
-    public static function parseArgs(string $args): array
+    public static function parseArgs(string $args, string $command = 'backtest'): array
     {
         $parts = preg_split('/\s+/', trim($args), -1, PREG_SPLIT_NO_EMPTY) ?: [];
         $positional = [];
@@ -126,7 +154,9 @@ final class Backtest
         }
 
         if (count($positional) < 3) {
-            throw new \InvalidArgumentException('Usage: /quant backtest <symbol> <interval> <from> [to] [fast=9 slow=21 …]  — e.g. /quant backtest BTCUSDT 1m 2026-10-01 2026-11-01');
+            throw new \InvalidArgumentException($command === 'sweep'
+                ? 'Usage: /quant sweep <symbol> <interval> <from> [to] fast=10..30:5 slow=30..100:10 [stopLossPct=0.1 …]  — e.g. /quant sweep BTCUSDT 1d 2024-11-01 2026-11-01 fast=10..30:5 slow=30..100:10'
+                : 'Usage: /quant backtest <symbol> <interval> <from> [to] [fast=9 slow=21 …]  — e.g. /quant backtest BTCUSDT 1m 2026-10-01 2026-11-01');
         }
 
         return [
@@ -167,7 +197,7 @@ final class Backtest
 
         // Everything that changes the result is in the name, so two runs never overwrite each other.
         $params = implode('-', array_map(static fn ($k, $v): string => "{$k}{$v}", array_keys($report->parameters), $report->parameters));
-        $costs = sprintf('order%s-fee%s-slip%s-stop%s', self::short($report->orderQuote), self::short($report->feeRate), self::short($report->slippage), self::short((float) $report->risk['stopLossPct']));
+        $costs = sprintf('order%s-fee%s-slip%s-stop%s', Limit::parse($report->orderQuote)->label(), self::short($report->feeRate), self::short($report->slippage), self::short((float) $report->risk['stopLossPct']));
         $file = sprintf('%s/%s-%s-%s-%s-%s-%s-%s.json', $directory, $report->symbol, $report->interval, gmdate('Ymd', intdiv($report->from, 1000)), gmdate('Ymd', intdiv($report->to, 1000)), $report->strategy, $params, $costs);
 
         if (file_put_contents($file, json_encode($report->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION) . "\n") === false) {

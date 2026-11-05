@@ -9,7 +9,8 @@ final readonly class Report
 {
     /**
      * @param array<string, mixed> $parameters
-     * @param array<string, float|int> $risk
+     * @param array<string, float|int|string> $risk
+     * @param float|string $orderQuote an amount, or `25%` / `all` of the free cash
      * @param array<string, mixed>|null $openPosition
      * @param list<array{0: int, 1: float}> $curve equity after each candle, downsampled: `[closeTime, equity]`
      * @param list<array<string, mixed>> $tradeList
@@ -20,7 +21,7 @@ final readonly class Report
         public string $strategy,
         public array $parameters,
         public array $risk,
-        public float $orderQuote,
+        public float|string $orderQuote,
         public float $feeRate,
         public float $slippage,
         public int $from,
@@ -30,6 +31,7 @@ final readonly class Report
         public float $finalEquity,
         public float $returnPct,
         public float $buyAndHoldPct,
+        public float $buyAndHoldDrawdownPct,
         public float $maxDrawdown,
         public float $maxDrawdownPct,
         public int $trades,
@@ -67,7 +69,7 @@ final readonly class Report
 
         return [
             sprintf('%s %s · %s %s · %s → %s · %d candles', $this->symbol, $this->interval, $this->strategy, json_encode($this->parameters), gmdate('Y-m-d', intdiv($this->from, 1000)), gmdate('Y-m-d', intdiv($this->to, 1000)), $this->candles),
-            sprintf('Equity %.2f → %.2f (%s) · buy & hold %s', $this->initialQuote, $this->finalEquity, $pct($this->returnPct), $pct($this->buyAndHoldPct)),
+            sprintf('Equity %.2f → %.2f (%s) · buy & hold %s (max drawdown %.2f%%)', $this->initialQuote, $this->finalEquity, $pct($this->returnPct), $pct($this->buyAndHoldPct), $this->buyAndHoldDrawdownPct * 100),
             sprintf('Max drawdown %.2f (%.2f%%)', $this->maxDrawdown, $this->maxDrawdownPct * 100),
             sprintf('Trades %d (%d closed): %d won, %d lost, win rate %.1f%%, profit factor %s', $this->trades, $this->closedTrades, $this->wins, $this->losses, $this->winRate * 100, is_finite($this->profitFactor) ? sprintf('%.2f', $this->profitFactor) : '∞'),
             sprintf('Fees %.2f (%.2f%% of initial) · average hold %s', $this->fees, $this->feesPct * 100, $holdText),

@@ -4,7 +4,19 @@ What changed, newest first, in pig's format: `## [x.y.z] - YYYY-MM-DD`, then onl
 have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`). Notes under
 `## Unreleased` belong to no version yet; the version itself lives in the git tag.
 
-## Unreleased
+## [0.4.0] - 2026-11-05
+
+### Added
+
+- Added parameter sweeps: `/quant sweep <symbol> <interval> <from> [to] fast=10..30:5 slow=30..100:10` and the `quant_sweep` tool run the same backtest over every combination of the ranges (`a..b:step`) or lists (`a,b,c`) given, on candles fetched once, and print a grid (two swept parameters) or a sorted list, each cell `return / profit factor`, with how many combinations beat buy & hold and how many lost. A combination the strategy refuses (`fast=30 slow=30`) is skipped and counted, not the end of the sweep. At most 500 combinations. The summary is kept under `~/.pig/agent/quant/sweeps/`. In the engine: `Quant\Backtest\Sweep` (ranges, combinations, the table); in pig: `PigQuant\Sweep`.
+- The order size and the two amount limits may be a share: `"orderQuote": "all"` (or `"50%"`) spends that share of the free cash on every strategy buy, so profits compound and a backtest compares fairly with holding; `risk.maxOrderQuote` and `maxExposureQuote` take `"all"` / `"50%"` of the equity. Numbers still mean what they did. Backtest and sweep overrides accept the same (`orderQuote=all`). In the engine: `Quant\Risk\Limit`; `RiskRules::refuseBuy()` takes the equity.
+- A backtest report carries buy & hold's own max drawdown (`buyAndHoldDrawdownPct`) next to the strategy's, so "less drawdown than holding" can be read off the report.
+
+### Changed
+
+- `PigQuant\Backtest::candles()` fetches a run's warm-up and range; the backtest and every run of a sweep share it.
+
+## [0.3.0] - 2026-11-05
 
 ### Added
 

@@ -102,13 +102,25 @@ final class Backtester
 
         $buyAndHold = $first->open > 0 ? $initial * (1 - $wallet->feeRate) * $last->close / ($first->open * (1 + $wallet->slippage)) : $initial;
 
+        // Buy & hold's own drawdown, from the closes: what the strategy's drawdown is measured against.
+        $holdPeak = $first->open;
+        $holdDrawdownPct = 0.0;
+
+        foreach ($candles as $candle) {
+            $holdPeak = max($holdPeak, $candle->close);
+
+            if ($holdPeak > 0) {
+                $holdDrawdownPct = max($holdDrawdownPct, ($holdPeak - $candle->close) / $holdPeak);
+            }
+        }
+
         return new Report(
             symbol: $symbol,
             interval: $engine->interval,
             strategy: $engine->strategy->name(),
             parameters: $engine->strategy->parameters(),
             risk: $engine->risk->toArray(),
-            orderQuote: $engine->orderQuote,
+            orderQuote: $engine->orderQuote->value(),
             feeRate: $wallet->feeRate,
             slippage: $wallet->slippage,
             from: $first->openTime,
@@ -118,6 +130,7 @@ final class Backtester
             finalEquity: $final,
             returnPct: ($final - $initial) / $initial,
             buyAndHoldPct: ($buyAndHold - $initial) / $initial,
+            buyAndHoldDrawdownPct: $holdDrawdownPct,
             maxDrawdown: $drawdown,
             maxDrawdownPct: $drawdownPct,
             trades: count($trades),

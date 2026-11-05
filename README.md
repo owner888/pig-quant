@@ -37,6 +37,7 @@ The stream reconnects after the exchange's 24-hour disconnect or a network blip,
 | `reset` | forget every trade, back to the initial balance (asks first) |
 | `spread start` / `stop` / `status` / `report [days]` | watch the price gap between two exchanges (observation only) and summarize it |
 | `backtest <symbol> <interval> <from> [to] [name=value…]` | run the strategy over past candles — `/quant backtest BTCUSDT 1m 2026-10-01 2026-11-01 fast=5 slow=20` |
+| `sweep <symbol> <interval> <from> [to] name=a..b:step…` | the same backtest over every combination of parameter ranges, as a grid — `/quant sweep BTCUSDT 1d 2024-11-01 2026-11-01 fast=10..30:5 slow=30..100:10` |
 
 ### Tools
 
@@ -47,6 +48,7 @@ The stream reconnects after the exchange's 24-hour disconnect or a network blip,
 | `quant_trades` | The paper trades, with the reason for each |
 | `quant_order` | A paper order through the risk rules; refused orders throw with the reason |
 | `quant_backtest` | The strategy over past candles, with the report below |
+| `quant_sweep` | Every combination of parameter ranges backtested over the same candles, one row each |
 | `quant_spread` | The spread watcher's status, or its report over the last N days |
 
 The `quant` skill tells the model it is a simulation, to place orders only when asked, and to explain the bot's trades from its rules rather than forecast prices.
@@ -60,11 +62,21 @@ With `pig web`, the sidebar's Extensions group has a **Quant dry run** panel: st
 ```
 /quant backtest BTCUSDT 1m 2026-10-01 2026-11-01
 /quant backtest ETHUSDT 15m 2026-06-01 fast=5 slow=20 stopLossPct=0.03
+/quant backtest BTC-USDT 1d 2024-11-01 2026-11-01 orderQuote=all maxOrderQuote=all maxExposureQuote=all maxPositions=1
 ```
 
 Dates are UTC; `to` defaults to now. The candles come from the exchange's REST endpoint a page at a time and every whole calendar month is kept under `~/.pig/agent/quant/candles/`, so the second run over the same months downloads nothing. `name=value` overrides a setting for this run only — `initialQuote`, `feeRate`, `slippage`, `orderQuote`, `fast`, `slow`, `maxOrderQuote`, `maxExposureQuote`, `maxPositions`, `stopLossPct`, `warmupCandles` — so parameters are compared without editing settings. Before the range, `warmupCandles` candles are seeded so the first candle can already be judged.
 
-The run uses a fresh engine with the same wallet, risk rules and strategy code as the dry run; the dry run's wallet is not touched. The report: final equity and return, the same range held outright (buy & hold) for comparison, max drawdown, trades won and lost, win rate, profit factor, fees and their share of the initial balance, average holding time, a position still open at the end (valued at the last close, not sold), the trades, and an equity curve downsampled to 500 points. It is kept as JSON under `~/.pig/agent/quant/backtests/`, named by what it tested.
+The run uses a fresh engine with the same wallet, risk rules and strategy code as the dry run; the dry run's wallet is not touched. Compare with buy & hold on the whole wallet (`orderQuote=all`), not on a fixed stake, or holding wins by compounding alone. The report: final equity and return, the same range held outright (buy & hold) for comparison with its own max drawdown, the strategy's max drawdown, trades won and lost, win rate, profit factor, fees and their share of the initial balance, average holding time, a position still open at the end (valued at the last close, not sold), the trades, and an equity curve downsampled to 500 points. It is kept as JSON under `~/.pig/agent/quant/backtests/`, named by what it tested.
+
+### Sweeping parameters
+
+```
+/quant sweep BTCUSDT 1d 2024-11-01 2026-11-01 fast=10..30:5 slow=30..100:10
+/quant sweep BTCUSDT 4h 2026-01-01 stopLossPct=0.02,0.05,0.1 fast=20 slow=50
+```
+
+One good backtest proves little: a parameter can fit two years of one market by luck. A sweep runs the same backtest over every combination of the ranges given — `a..b:step` (the step defaults to 1), or a list `a,b,c`; a plain `name=value` holds that setting for every run — on candles fetched once, and prints the results together. Two swept parameters make a grid, rows for the first and columns for the second, each cell `return / profit factor`; any other number makes a list sorted by return. The last line counts how many combinations beat buy & hold and how many lost money. Read the shape, not the best cell: a good cell among good neighbours is a region worth more tests; a good cell among bad ones is an overfit. A combination the strategy refuses (a fast period not shorter than the slow one) is skipped and counted. At most 500 combinations. The summary is kept under `~/.pig/agent/quant/sweeps/`.
 
 ## Watching the spread between two exchanges
 
@@ -103,7 +115,7 @@ Under `quant` in `~/.pig/agent/settings.json`:
 ```
 
 - `symbols` — any number; each has its own series and position. `interval` is one of Binance's (`1m`, `5m`, `1h`, …).
-- `orderQuote` — what one strategy buy spends. `risk.maxOrderQuote` caps any buy, `maxExposureQuote` caps what is in positions at cost, `maxPositions` caps how many symbols are held, `stopLossPct` (0.02 = 2%) closes a position under its average price; 0 turns the stop-loss off.
+- `orderQuote` — what one strategy buy spends: an amount (`100`), or a share of the free cash (`"50%"`, `"all"`) so that profits compound. `risk.maxOrderQuote` caps any buy and `maxExposureQuote` caps what is in positions at cost — each an amount, or a share of the equity (`"all"` lifts the cap); `maxPositions` caps how many symbols are held, `stopLossPct` (0.02 = 2%) closes a position under its average price; 0 turns the stop-loss off.
 - `restUrl` / `streamUrl` — Binance keeps several hosts. Where `api.binance.com` is not reachable, `https://data-api.binance.vision` serves market data without a key; the spot testnet is `https://testnet.binance.vision` and `wss://stream.testnet.binance.vision`.
 - `exchange` — `binance` (default) or `okx`. With `okx`, symbols are `BTC-USDT` (a `BTCUSDT` is split for you), the URL defaults become OKX's (`https://www.okx.com`, `wss://ws.okx.com:8443`), history is paged backward 100 candles at a time (slower than Binance's 1,000: a month of 1m candles is ~450 pages), and the stream is subscribed to by message and kept alive with a `ping` every 20 s.
 - `strategy.name` — `ma-cross` (SMA crossover, `fast` and `slow` periods) is the one that ships.

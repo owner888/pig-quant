@@ -10,6 +10,7 @@ use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Logger;
+use Quant\Backtest\Sweep as Grid;
 use Quant\Wallet\Trade;
 use Throwable;
 
@@ -60,7 +61,7 @@ final class Extension
         // -------------------------------------------------------------------------
         $pi->registerCommand(
             name: 'quant',
-            description: 'Dry-run trading: /quant status | start | stop | trades | buy <symbol> [quote] | sell <symbol> | reset | backtest <symbol> <interval> <from> [to] [fast=9 slow=21 …] | spread start|stop|status|report [days]',
+            description: 'Dry-run trading: /quant status | start | stop | trades | buy <symbol> [quote] | sell <symbol> | reset | backtest <symbol> <interval> <from> [to] [fast=9 slow=21 …] | sweep <symbol> <interval> <from> [to] fast=10..30:5 slow=30..100:10 | spread start|stop|status|report [days]',
             handler: static function (string $args, HookContext $ctx) use ($hub, $pi): void {
                 $parts = preg_split('/\s+/', trim($args), 3, PREG_SPLIT_NO_EMPTY) ?: [];
                 $sub = strtolower($parts[0] ?? 'status');
@@ -86,6 +87,13 @@ final class Extension
                             $spec = Backtest::parseArgs(substr(trim($args), strlen($parts[0])));
                             $run = Backtest::run($pi->getSettings(), $spec['symbol'], $spec['interval'], $spec['from'], $spec['to'], $spec['overrides'], static fn (string $line) => $ctx->ui->notify('quant: ' . $line));
                             $ctx->ui->notify("📊 Backtest\n  " . implode("\n  ", $run['report']->lines()) . "\n  Saved to {$run['file']}");
+
+                            return;
+
+                        case 'sweep':
+                            $spec = Backtest::parseArgs(substr(trim($args), strlen($parts[0])), 'sweep');
+                            $sweep = Sweep::run($pi->getSettings(), $spec['symbol'], $spec['interval'], $spec['from'], $spec['to'], $spec['overrides'], static fn (string $line) => $ctx->ui->notify('quant: ' . $line));
+                            $ctx->ui->notify("📊 Sweep\n  " . implode("\n  ", Grid::lines($sweep['results'], $sweep['sweeps'])) . ($sweep['skipped'] === [] ? '' : "\n  Skipped " . count($sweep['skipped']) . ': ' . implode('; ', array_unique($sweep['skipped']))) . "\n  Saved to {$sweep['file']}");
 
                             return;
 
@@ -138,7 +146,7 @@ final class Extension
                             return;
 
                         default:
-                            $ctx->ui->notify("No '/quant {$sub}'. There is: status, start, stop, trades, buy, sell, reset, backtest, spread.", 'error');
+                            $ctx->ui->notify("No '/quant {$sub}'. There is: status, start, stop, trades, buy, sell, reset, backtest, sweep, spread.", 'error');
                     }
                 } catch (Throwable $error) {
                     $ctx->ui->notify('❌ quant: ' . $error->getMessage(), 'error');
@@ -222,7 +230,7 @@ final class Extension
                     'interval' => ['type' => 'string', 'description' => 'Candle interval: 1m, 5m, 15m, 1h, 4h, 1d'],
                     'from' => ['type' => 'string', 'description' => 'Start, UTC: 2026-10-01 or 2026-10-01T09:30'],
                     'to' => ['type' => 'string', 'description' => 'End, UTC; now when omitted'],
-                    'overrides' => ['type' => 'object', 'description' => 'Settings for this run only, by name: ' . implode(', ', Backtest::OVERRIDES), 'additionalProperties' => ['type' => 'number']],
+                    'overrides' => ['type' => 'object', 'description' => 'Settings for this run only, by name: ' . implode(', ', Backtest::OVERRIDES) . '. orderQuote, maxOrderQuote and maxExposureQuote may also be "all" or "50%" (a share of the free cash for the order size, of the equity for the limits) so profits compound.', 'additionalProperties' => ['type' => ['number', 'string']]],
                 ],
                 'required' => ['symbol', 'interval', 'from'],
             ],
@@ -242,6 +250,48 @@ final class Extension
                 $report['file'] = $run['file'];
 
                 return new AgentToolResult([new TextContent(self::json($report))]);
+            },
+        ));
+
+        $pi->registerTool(new CustomTool(
+            name: 'quant_sweep',
+            label: 'Quant sweep',
+            description: 'Backtest every combination of parameter ranges over the same candles and return one row per combination (return, buy-and-hold, max drawdown, profit factor, closed trades, win rate). Use it to see whether a good parameter sits among good neighbours or alone; a lone good cell is an overfit. A range is "10..30:5" (start..end:step), a list "30,50,100"; a plain number holds that setting for every run. At most 500 combinations.',
+            parameters: [
+                'type' => 'object',
+                'properties' => [
+                    'symbol' => ['type' => 'string', 'description' => 'e.g. BTCUSDT'],
+                    'interval' => ['type' => 'string', 'description' => 'Candle interval: 1m, 5m, 15m, 1h, 4h, 1d'],
+                    'from' => ['type' => 'string', 'description' => 'Start, UTC: 2026-10-01 or 2026-10-01T09:30'],
+                    'to' => ['type' => 'string', 'description' => 'End, UTC; now when omitted'],
+                    'overrides' => ['type' => 'object', 'description' => 'By name (' . implode(', ', Backtest::OVERRIDES) . '): a range "10..30:5", a list "30,50,100", or one number; orderQuote, maxOrderQuote and maxExposureQuote may be "all" or "50%"', 'additionalProperties' => ['type' => 'string']],
+                ],
+                'required' => ['symbol', 'interval', 'from', 'overrides'],
+            ],
+            execute: static function (string $id, array $params) use ($pi): AgentToolResult {
+                $sweep = Sweep::run(
+                    $pi->getSettings(),
+                    (string) $params['symbol'],
+                    (string) $params['interval'],
+                    Backtest::parseDate((string) $params['from']),
+                    isset($params['to']) ? Backtest::parseDate((string) $params['to']) : (int) floor(microtime(true) * 1000),
+                    array_map(static fn ($v): string => (string) $v, is_array($params['overrides'] ?? null) ? $params['overrides'] : []),
+                );
+                $first = $sweep['results'][0]['report'];
+
+                return new AgentToolResult([new TextContent(self::json([
+                    'symbol' => $first->symbol,
+                    'interval' => $first->interval,
+                    'strategy' => $first->strategy,
+                    'candles' => $first->candles,
+                    'buyAndHoldPct' => $first->buyAndHoldPct,
+                    'buyAndHoldDrawdownPct' => $first->buyAndHoldDrawdownPct,
+                    'sweeps' => $sweep['sweeps'],
+                    'skipped' => $sweep['skipped'],
+                    'runs' => Sweep::rows($sweep['results']),
+                    'table' => Grid::lines($sweep['results'], $sweep['sweeps']),
+                    'file' => $sweep['file'],
+                ]))]);
             },
         ));
 
