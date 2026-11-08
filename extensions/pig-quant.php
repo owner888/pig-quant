@@ -27,6 +27,6 @@ spl_autoload_register(static function (string $class): void {
     }
 });
 
-return static function (ExtensionApi $pi): void {
-    Extension::register($pi);
+return static function (ExtensionApi $pig): void {
+    Extension::register($pig);
 };

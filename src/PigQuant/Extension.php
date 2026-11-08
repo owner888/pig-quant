@@ -8,7 +8,7 @@ use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\Extensions\ExtensionApi;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\Logger;
 use Quant\Backtest\Sweep as Grid;
 use Quant\Funding\Carry;
@@ -26,14 +26,14 @@ final class Extension
         return (string) json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION);
     }
 
-    public static function register(ExtensionApi $pi): void
+    public static function register(ExtensionApi $pig): void
     {
-        $hub = new Hub($pi);
+        $hub = new Hub($pig);
 
-        $pi->on('session_start', static function ($event, HookContext $ctx) use ($pi, $hub): void {
-            Config::writeDefaults($pi->getSettings());
+        $pig->on('session_start', static function ($event, ExtensionContext $ctx) use ($pig, $hub): void {
+            Config::writeDefaults($pig->getSettings());
 
-            $config = Config::load($pi->getSettings());
+            $config = Config::load($pig->getSettings());
 
             if ($config['autostart'] === true) {
                 try {
@@ -64,15 +64,15 @@ final class Extension
             }
         });
 
-        $pi->on('session_shutdown', static fn () => $hub->shutdown());
+        $pig->on('session_shutdown', static fn () => $hub->shutdown());
 
         // -------------------------------------------------------------------------
         // Slash command: /quant
         // -------------------------------------------------------------------------
-        $pi->registerCommand(
+        $pig->registerCommand(
             name: 'quant',
             description: 'Dry-run trading: /quant status | start | stop | trades | buy <symbol> [quote] | sell <symbol> | reset | backtest <symbol[,symbol…]> <interval> <from> [to] [fast=9 slow=21 …] | sweep <symbol[,…]> <interval> <from> [to] fast=10..30:5 slow=30..100:10 | funding <symbol> <from> [to] | funding watch start|stop|status | spread start|stop|status|report [days]',
-            handler: static function (string $args, HookContext $ctx) use ($hub, $pi): void {
+            handler: static function (string $args, ExtensionContext $ctx) use ($hub, $pig): void {
                 $parts = preg_split('/\s+/', trim($args), 3, PREG_SPLIT_NO_EMPTY) ?: [];
                 $sub = strtolower($parts[0] ?? 'status');
 
@@ -95,14 +95,14 @@ final class Extension
 
                         case 'backtest':
                             $spec = Backtest::parseArgs(substr(trim($args), strlen($parts[0])));
-                            $run = Backtest::run($pi->getSettings(), $spec['symbol'], $spec['interval'], $spec['from'], $spec['to'], $spec['overrides'], static fn (string $line) => $ctx->ui->notify('quant: ' . $line));
+                            $run = Backtest::run($pig->getSettings(), $spec['symbol'], $spec['interval'], $spec['from'], $spec['to'], $spec['overrides'], static fn (string $line) => $ctx->ui->notify('quant: ' . $line));
                             $ctx->ui->notify("📊 Backtest\n  " . implode("\n  ", $run['report']->lines()) . "\n  Saved to {$run['file']}");
 
                             return;
 
                         case 'sweep':
                             $spec = Backtest::parseArgs(substr(trim($args), strlen($parts[0])), 'sweep');
-                            $sweep = Sweep::run($pi->getSettings(), $spec['symbol'], $spec['interval'], $spec['from'], $spec['to'], $spec['overrides'], static fn (string $line) => $ctx->ui->notify('quant: ' . $line));
+                            $sweep = Sweep::run($pig->getSettings(), $spec['symbol'], $spec['interval'], $spec['from'], $spec['to'], $spec['overrides'], static fn (string $line) => $ctx->ui->notify('quant: ' . $line));
                             $ctx->ui->notify("📊 Sweep\n  " . implode("\n  ", Grid::lines($sweep['results'], $sweep['sweeps'])) . ($sweep['skipped'] === [] ? '' : "\n  Skipped " . count($sweep['skipped']) . ': ' . implode('; ', array_unique($sweep['skipped']))) . "\n  Saved to {$sweep['file']}");
 
                             return;
@@ -124,7 +124,7 @@ final class Extension
                             }
 
                             $spec = Funding::parseArgs(substr(trim($args), strlen($parts[0])));
-                            $run = Funding::run($pi->getSettings(), $spec['symbol'], $spec['from'], $spec['to'], static fn (string $line) => $ctx->ui->notify('quant: ' . $line));
+                            $run = Funding::run($pig->getSettings(), $spec['symbol'], $spec['from'], $spec['to'], static fn (string $line) => $ctx->ui->notify('quant: ' . $line));
                             $ctx->ui->notify("📊 Funding carry\n  " . implode("\n  ", Carry::lines($run['summary'], $run['symbol'])));
 
                             return;
@@ -189,7 +189,7 @@ final class Extension
         // -------------------------------------------------------------------------
         // Tools
         // -------------------------------------------------------------------------
-        $pi->registerTool(new CustomTool(
+        $pig->registerTool(new CustomTool(
             name: 'quant_status',
             label: 'Quant status',
             description: 'The dry-run trading engine: whether it is streaming (and in which pig process, ownerPid), the exchange, symbols, strategy and risk limits, cash, equity, open positions with unrealized P&L, last prices, the last trades.',
@@ -197,7 +197,7 @@ final class Extension
             execute: static fn (string $id, array $params): AgentToolResult => new AgentToolResult([new TextContent(self::json($hub->status()))]),
         ));
 
-        $pi->registerTool(new CustomTool(
+        $pig->registerTool(new CustomTool(
             name: 'quant_candles',
             label: 'Quant candles',
             description: 'The last candles the engine holds for a symbol it trades (no network call): openTime, open, high, low, close, volume, closeTime, closed. Times are Unix milliseconds.',
@@ -214,7 +214,7 @@ final class Extension
             ))]),
         ));
 
-        $pi->registerTool(new CustomTool(
+        $pig->registerTool(new CustomTool(
             name: 'quant_trades',
             label: 'Quant trades',
             description: 'The paper trades so far, oldest first: time, symbol, side, quantity, price, fee, quoteAmount, pnl (sells only), reason.',
@@ -227,7 +227,7 @@ final class Extension
             ))]),
         ));
 
-        $pi->registerTool(new CustomTool(
+        $pig->registerTool(new CustomTool(
             name: 'quant_order',
             label: 'Quant order (dry run)',
             description: 'Place a paper order at the last price seen, through the same risk limits the strategy has. Nothing reaches an exchange. A buy spends quote_amount (the configured order size when omitted); a sell closes quantity of the position (all of it when omitted). Refused orders throw with the reason.',
@@ -251,7 +251,7 @@ final class Extension
             )))]),
         ));
 
-        $pi->registerTool(new CustomTool(
+        $pig->registerTool(new CustomTool(
             name: 'quant_backtest',
             label: 'Quant backtest',
             description: 'Run the configured strategy over past candles (fetched from the exchange, cached by month) and report: final equity, return vs buy-and-hold, max drawdown, trades, win rate, profit factor, fees, average hold, the last trades and a downsampled equity curve. The dry-run wallet is not touched. Overrides change one run only. Takes seconds to a minute for a month of 1m candles.',
@@ -266,9 +266,9 @@ final class Extension
                 ],
                 'required' => ['symbol', 'interval', 'from'],
             ],
-            execute: static function (string $id, array $params) use ($pi): AgentToolResult {
+            execute: static function (string $id, array $params) use ($pig): AgentToolResult {
                 $run = Backtest::run(
-                    $pi->getSettings(),
+                    $pig->getSettings(),
                     (string) $params['symbol'],
                     (string) $params['interval'],
                     Backtest::parseDate((string) $params['from']),
@@ -285,7 +285,7 @@ final class Extension
             },
         ));
 
-        $pi->registerTool(new CustomTool(
+        $pig->registerTool(new CustomTool(
             name: 'quant_sweep',
             label: 'Quant sweep',
             description: 'Backtest every combination of parameter ranges over the same candles and return one row per combination (return, buy-and-hold, max drawdown, profit factor, closed trades, win rate). Use it to see whether a good parameter sits among good neighbours or alone; a lone good cell is an overfit. A range is "10..30:5" (start..end:step), a list "30,50,100"; a plain number holds that setting for every run. At most 500 combinations.',
@@ -300,9 +300,9 @@ final class Extension
                 ],
                 'required' => ['symbol', 'interval', 'from', 'overrides'],
             ],
-            execute: static function (string $id, array $params) use ($pi): AgentToolResult {
+            execute: static function (string $id, array $params) use ($pig): AgentToolResult {
                 $sweep = Sweep::run(
-                    $pi->getSettings(),
+                    $pig->getSettings(),
                     (string) $params['symbol'],
                     (string) $params['interval'],
                     Backtest::parseDate((string) $params['from']),
@@ -327,7 +327,7 @@ final class Extension
             },
         ));
 
-        $pi->registerTool(new CustomTool(
+        $pig->registerTool(new CustomTool(
             name: 'quant_funding',
             label: 'Quant funding',
             description: 'What a cash-and-carry (long spot, short the perpetual, same notional) would have collected in funding over a range, from Binance perpetual funding history: gross and net of one round trip (four legs), annualized, on the capital both legs tie up, the share and longest stretch of negative settlements, and every month\'s total. Observation only. The price cancels out in a carry; what remains is funding, exchange risk and the basis at entry/exit (not modelled).',
@@ -340,9 +340,9 @@ final class Extension
                 ],
                 'required' => ['symbol', 'from'],
             ],
-            execute: static function (string $id, array $params) use ($pi): AgentToolResult {
+            execute: static function (string $id, array $params) use ($pig): AgentToolResult {
                 $run = Funding::run(
-                    $pi->getSettings(),
+                    $pig->getSettings(),
                     (string) $params['symbol'],
                     Backtest::parseDate((string) $params['from']),
                     isset($params['to']) ? Backtest::parseDate((string) $params['to']) : (int) floor(microtime(true) * 1000),
@@ -352,7 +352,7 @@ final class Extension
             },
         ));
 
-        $pi->registerTool(new CustomTool(
+        $pig->registerTool(new CustomTool(
             name: 'quant_funding_watch',
             label: 'Quant funding watch',
             description: 'The funding watcher: whether it is polling, each watched perpetual\'s current funding rate per settlement and annualized, when it next settles, which ones are over the alert threshold and since when, and polls that failed. Alerts are also appended to ~/.pig/agent/quant/funding/alerts.jsonl. Start and stop are the person\'s (/quant funding watch start|stop).',
@@ -360,7 +360,7 @@ final class Extension
             execute: static fn (string $id, array $params): AgentToolResult => new AgentToolResult([new TextContent(self::json($hub->fundingWatchStatus()))]),
         ));
 
-        $pi->registerTool(new CustomTool(
+        $pig->registerTool(new CustomTool(
             name: 'quant_spread',
             label: 'Quant spread',
             description: 'The price gap between two exchanges for one symbol, watched live (observation only, nothing is traded). "status": whether it is running, the live gap in bps and the latest prices. "report": the complete minutes of the last N days summarized — mean and percentile gaps, how often and how long the gap cleared the round-trip cost threshold. 1 bps = 0.01%.',
@@ -380,7 +380,7 @@ final class Extension
         // -------------------------------------------------------------------------
         // Web UI panel
         // -------------------------------------------------------------------------
-        $pi->registerWebPanel(
+        $pig->registerWebPanel(
             Panel::ID,
             Panel::TITLE,
             static fn (array $request): array => Panel::blocks($hub->status(), $request['locale']),

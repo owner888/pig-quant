@@ -34,7 +34,7 @@ final class Hub
 
     private static ?Owner $owner = null;
 
-    public function __construct(private readonly ExtensionApi $pi)
+    public function __construct(private readonly ExtensionApi $pig)
     {
     }
 
