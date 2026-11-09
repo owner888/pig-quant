@@ -6,7 +6,7 @@ namespace PigQuant;
 
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
-use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\Logger;
@@ -189,7 +189,7 @@ final class Extension
         // -------------------------------------------------------------------------
         // Tools
         // -------------------------------------------------------------------------
-        $pig->registerTool(new CustomTool(
+        $pig->registerTool(new ToolDefinition(
             name: 'quant_status',
             label: 'Quant status',
             description: 'The dry-run trading engine: whether it is streaming (and in which pig process, ownerPid), the exchange, symbols, strategy and risk limits, cash, equity, open positions with unrealized P&L, last prices, the last trades.',
@@ -197,7 +197,7 @@ final class Extension
             execute: static fn (string $id, array $params): AgentToolResult => new AgentToolResult([new TextContent(self::json($hub->status()))]),
         ));
 
-        $pig->registerTool(new CustomTool(
+        $pig->registerTool(new ToolDefinition(
             name: 'quant_candles',
             label: 'Quant candles',
             description: 'The last candles the engine holds for a symbol it trades (no network call): openTime, open, high, low, close, volume, closeTime, closed. Times are Unix milliseconds.',
@@ -214,7 +214,7 @@ final class Extension
             ))]),
         ));
 
-        $pig->registerTool(new CustomTool(
+        $pig->registerTool(new ToolDefinition(
             name: 'quant_trades',
             label: 'Quant trades',
             description: 'The paper trades so far, oldest first: time, symbol, side, quantity, price, fee, quoteAmount, pnl (sells only), reason.',
@@ -227,7 +227,7 @@ final class Extension
             ))]),
         ));
 
-        $pig->registerTool(new CustomTool(
+        $pig->registerTool(new ToolDefinition(
             name: 'quant_order',
             label: 'Quant order (dry run)',
             description: 'Place a paper order at the last price seen, through the same risk limits the strategy has. Nothing reaches an exchange. A buy spends quote_amount (the configured order size when omitted); a sell closes quantity of the position (all of it when omitted). Refused orders throw with the reason.',
@@ -251,7 +251,7 @@ final class Extension
             )))]),
         ));
 
-        $pig->registerTool(new CustomTool(
+        $pig->registerTool(new ToolDefinition(
             name: 'quant_backtest',
             label: 'Quant backtest',
             description: 'Run the configured strategy over past candles (fetched from the exchange, cached by month) and report: final equity, return vs buy-and-hold, max drawdown, trades, win rate, profit factor, fees, average hold, the last trades and a downsampled equity curve. The dry-run wallet is not touched. Overrides change one run only. Takes seconds to a minute for a month of 1m candles.',
@@ -285,7 +285,7 @@ final class Extension
             },
         ));
 
-        $pig->registerTool(new CustomTool(
+        $pig->registerTool(new ToolDefinition(
             name: 'quant_sweep',
             label: 'Quant sweep',
             description: 'Backtest every combination of parameter ranges over the same candles and return one row per combination (return, buy-and-hold, max drawdown, profit factor, closed trades, win rate). Use it to see whether a good parameter sits among good neighbours or alone; a lone good cell is an overfit. A range is "10..30:5" (start..end:step), a list "30,50,100"; a plain number holds that setting for every run. At most 500 combinations.',
@@ -327,7 +327,7 @@ final class Extension
             },
         ));
 
-        $pig->registerTool(new CustomTool(
+        $pig->registerTool(new ToolDefinition(
             name: 'quant_funding',
             label: 'Quant funding',
             description: 'What a cash-and-carry (long spot, short the perpetual, same notional) would have collected in funding over a range, from Binance perpetual funding history: gross and net of one round trip (four legs), annualized, on the capital both legs tie up, the share and longest stretch of negative settlements, and every month\'s total. Observation only. The price cancels out in a carry; what remains is funding, exchange risk and the basis at entry/exit (not modelled).',
@@ -352,7 +352,7 @@ final class Extension
             },
         ));
 
-        $pig->registerTool(new CustomTool(
+        $pig->registerTool(new ToolDefinition(
             name: 'quant_funding_watch',
             label: 'Quant funding watch',
             description: 'The funding watcher: whether it is polling, each watched perpetual\'s current funding rate per settlement and annualized, when it next settles, which ones are over the alert threshold and since when, and polls that failed. Alerts are also appended to ~/.pig/agent/quant/funding/alerts.jsonl. Start and stop are the person\'s (/quant funding watch start|stop).',
@@ -360,7 +360,7 @@ final class Extension
             execute: static fn (string $id, array $params): AgentToolResult => new AgentToolResult([new TextContent(self::json($hub->fundingWatchStatus()))]),
         ));
 
-        $pig->registerTool(new CustomTool(
+        $pig->registerTool(new ToolDefinition(
             name: 'quant_spread',
             label: 'Quant spread',
             description: 'The price gap between two exchanges for one symbol, watched live (observation only, nothing is traded). "status": whether it is running, the live gap in bps and the latest prices. "report": the complete minutes of the last N days summarized — mean and percentile gaps, how often and how long the gap cleared the round-trip cost threshold. 1 bps = 0.01%.',
